@@ -1,0 +1,102 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model LinkedInAccount {
+  id        String   @id
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  jobPostings   JobPosting[]
+  applications  Application[]
+  events        Event[]
+
+  @@map("linkedin_accounts")
+}
+
+model JobPosting {
+  id             String   @id @default(cuid())
+  linkedInJobId  String
+  url            String
+  title          String?
+  companyName    String?
+  location       String?
+  workplaceType  String?
+  description    String?
+  easyApply      Boolean  @default(false)
+
+  discoveredAt   DateTime @default(now())
+  lastSeenAt     DateTime @default(now())
+
+  accountId      String
+  account        LinkedInAccount @relation(fields: [accountId], references: [id])
+
+  applications   Application[]
+  events         Event[]
+
+  @@unique([accountId, linkedInJobId])
+  @@index([accountId, discoveredAt])
+  @@map("job_postings")
+}
+
+model Application {
+  id            String   @id @default(cuid())
+  status        String   @default("queued") // queued|in_progress|needs_review|submitted|failed|blocked
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  accountId     String
+  account       LinkedInAccount @relation(fields: [accountId], references: [id])
+
+  jobPostingId  String
+  jobPosting    JobPosting @relation(fields: [jobPostingId], references: [id])
+
+  steps         ApplicationStep[]
+  events        Event[]
+
+  @@index([accountId, createdAt])
+  @@index([jobPostingId])
+  @@map("applications")
+}
+
+model ApplicationStep {
+  id             String   @id @default(cuid())
+  createdAt      DateTime @default(now())
+
+  applicationId  String
+  application    Application @relation(fields: [applicationId], references: [id])
+
+  name           String   // e.g. NAVIGATE_JOB, OPEN_EASY_APPLY, FILL_QUESTION, SUBMIT
+  state          String   // e.g. started|succeeded|failed|blocked
+  detail         Json?
+
+  @@index([applicationId, createdAt])
+  @@map("application_steps")
+}
+
+model Event {
+  id             String   @id @default(cuid())
+  time           DateTime @default(now())
+
+  runId          String
+  type           String
+  payload        Json?
+
+  accountId      String?
+  account        LinkedInAccount? @relation(fields: [accountId], references: [id])
+
+  jobPostingId   String?
+  jobPosting     JobPosting? @relation(fields: [jobPostingId], references: [id])
+
+  applicationId  String?
+  application    Application? @relation(fields: [applicationId], references: [id])
+
+  @@index([runId, time])
+  @@map("events")
+}
+

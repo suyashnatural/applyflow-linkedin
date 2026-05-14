@@ -13,7 +13,7 @@ const AppConfigSchema = z.object({
   nodeEnv: z.string().default("development"),
   databaseUrl: z
     .string()
-    .url()
+    .min(1)
     .default("postgresql://applyflow:applyflow@localhost:5432/applyflow?schema=public"),
   logLevel: LogLevelSchema.default("info"),
   openaiApiKey: z.string().min(1).optional(),

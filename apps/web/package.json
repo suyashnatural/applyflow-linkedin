@@ -1,0 +1,17 @@
+{
+  "name": "@applyflow/web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node src/index.ts",
+    "build": "echo \"no build yet\"",
+    "lint": "echo \"lint handled at root\"",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node -e \"console.log('no tests yet')\""
+  },
+  "dependencies": {
+    "@applyflow/config": "0.0.0",
+    "@applyflow/observability": "0.0.0"
+  }
+}

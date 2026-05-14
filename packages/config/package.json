@@ -1,0 +1,13 @@
+{
+  "name": "@applyflow/config",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "echo \"no build yet\"",
+    "lint": "echo \"lint handled at root\"",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node -e \"console.log('no tests yet')\""
+  }
+}

@@ -28,3 +28,8 @@
 
 - Enqueue a discovery job by running API with `RUN_DISCOVER_DEMO=1`.
 - Configure `LINKEDIN_KEYWORDS`, `LINKEDIN_LOCATION`, `LINKEDIN_MAX_CARDS`.
+
+## LinkedIn Job Details (Dev)
+
+- Backfill incomplete rows by running API with `RUN_SYNC_DEMO=1`.
+- Configure `LINKEDIN_SYNC_MAX_JOBS`.

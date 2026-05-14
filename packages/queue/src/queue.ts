@@ -1,5 +1,5 @@
 import { getDb } from "@applyflow/db";
-import { QueueJobStatus } from "@prisma/client";
+import { QueueJobStatus, Prisma } from "@prisma/client";
 
 import type { EnqueueJobRequest, LeaseResult } from "./types.js";
 import { EnqueueJobRequestSchema } from "./types.js";
@@ -37,7 +37,7 @@ export async function leaseNextJob(params: {
   const now = new Date();
   const leasedUntil = new Date(now.getTime() + params.leaseMs);
 
-  return await db.$transaction(async (tx) => {
+  return await db.$transaction(async (tx: Prisma.TransactionClient) => {
     const candidate = await tx.queueJob.findFirst({
       where: {
         status: QueueJobStatus.queued,
@@ -48,13 +48,13 @@ export async function leaseNextJob(params: {
       select: { id: true, attempts: true, maxAttempts: true },
     });
 
-    if (!candidate) return { kind: "none" };
+    if (!candidate) return { kind: "none" } as const;
     if (candidate.attempts >= candidate.maxAttempts) {
       await tx.queueJob.update({
         where: { id: candidate.id },
         data: { status: QueueJobStatus.failed, error: "max_attempts_exceeded" },
       });
-      return { kind: "none" };
+      return { kind: "none" } as const;
     }
 
     await tx.queueJob.update({
@@ -67,7 +67,7 @@ export async function leaseNextJob(params: {
       },
     });
 
-    return { kind: "leased", jobId: candidate.id };
+    return { kind: "leased", jobId: candidate.id } as const;
   });
 }
 

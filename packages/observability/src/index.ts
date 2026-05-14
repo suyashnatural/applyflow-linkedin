@@ -1,3 +1,5 @@
+import { redactSecrets } from "@applyflow/config";
+
 type LogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "trace";
 
 function levelRank(level: LogLevel): number {
@@ -42,11 +44,11 @@ export const logger = {
   info(obj: Record<string, unknown> | undefined, msg: string) {
     if (levelRank("info") < levelRank(minLevel)) return;
     // eslint-disable-next-line no-console
-    console.log(JSON.stringify({ level: "info", time: nowIso(), msg, ...obj }));
+    console.log(JSON.stringify(redactSecrets({ level: "info", time: nowIso(), msg, ...obj })));
   },
   error(obj: Record<string, unknown> | undefined, msg: string) {
     if (levelRank("error") < levelRank(minLevel)) return;
     // eslint-disable-next-line no-console
-    console.error(JSON.stringify({ level: "error", time: nowIso(), msg, ...obj }));
+    console.error(JSON.stringify(redactSecrets({ level: "error", time: nowIso(), msg, ...obj })));
   },
 };

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const QueueJobTypeSchema = z.enum([
+  "LINKEDIN_SESSION_BOOTSTRAP",
   "DISCOVER_LINKEDIN_JOBS",
   "SYNC_JOB_DETAILS",
   "EASY_APPLY_ATTEMPT",

@@ -18,3 +18,8 @@
 
 - Use `.env` (not committed) for secrets.
 - Logs must not include secrets; logger redaction is enabled by default.
+
+## LinkedIn Session Bootstrap
+
+- First-time login is manual: run worker with `HEADFUL=1` so a real browser window opens.
+- Sessions persist in `PLAYWRIGHT_USER_DATA_DIR_BASE/<LINKEDIN_ACCOUNT_ID>` (defaults to `.local/linkedin-profiles/default`).

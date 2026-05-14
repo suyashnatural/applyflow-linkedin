@@ -23,3 +23,8 @@
 
 - First-time login is manual: run worker with `HEADFUL=1` so a real browser window opens.
 - Sessions persist in `PLAYWRIGHT_USER_DATA_DIR_BASE/<LINKEDIN_ACCOUNT_ID>` (defaults to `.local/linkedin-profiles/default`).
+
+## LinkedIn Discovery (Dev)
+
+- Enqueue a discovery job by running API with `RUN_DISCOVER_DEMO=1`.
+- Configure `LINKEDIN_KEYWORDS`, `LINKEDIN_LOCATION`, `LINKEDIN_MAX_CARDS`.

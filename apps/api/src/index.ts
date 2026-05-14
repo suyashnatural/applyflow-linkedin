@@ -7,9 +7,10 @@ logger.info({ env: config.nodeEnv }, "api boot");
 
 if (process.env.RUN_ENQUEUE_DEMO === "1") {
   const jobId = await enqueueJob({
-    type: "DISCOVER_LINKEDIN_JOBS",
+    type: "LINKEDIN_SESSION_BOOTSTRAP",
     runId: `run-${Date.now()}`,
     priority: 0,
+    accountId: process.env.LINKEDIN_ACCOUNT_ID,
   });
   logger.info({ jobId }, "enqueued demo job");
 }

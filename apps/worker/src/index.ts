@@ -4,6 +4,7 @@ import { completeJob, leaseNextJob } from "@applyflow/queue";
 import { getDb } from "@applyflow/db";
 import {
   discoverLinkedInJobs,
+  easyApplyDryRun,
   ensureLinkedInSession,
   fetchLinkedInJobDetail,
 } from "@applyflow/linkedin-automation";
@@ -40,7 +41,7 @@ for (;;) {
         throw new Error("LINKEDIN_SESSION_BOOTSTRAP requires accountId");
       }
 
-      const headful = process.env.HEADFUL === "1";
+      const headful = process.env.HEADFUL ? process.env.HEADFUL === "1" : true;
       const result = await ensureLinkedInSession({ accountId, headful });
       logger.info({ jobId, accountId, result }, "linkedin session check");
 
@@ -72,7 +73,7 @@ for (;;) {
           ? Math.floor(maxCardsRaw)
           : 25;
 
-      const headful = process.env.HEADFUL === "1";
+      const headful = process.env.HEADFUL ? process.env.HEADFUL === "1" : true;
       const discoverParams: Parameters<typeof discoverLinkedInJobs>[0] = {
         accountId,
         headful,
@@ -114,7 +115,7 @@ for (;;) {
       const maxJobs =
         typeof maxJobsRaw === "number" && Number.isFinite(maxJobsRaw) ? Math.floor(maxJobsRaw) : 10;
 
-      const headful = process.env.HEADFUL === "1";
+      const headful = process.env.HEADFUL ? process.env.HEADFUL === "1" : true;
 
       const candidates = await db.jobPosting.findMany({
         where: {
@@ -163,6 +164,91 @@ for (;;) {
             lastSeenAt: new Date(),
           },
         });
+      }
+    } else if (job.type === "EASY_APPLY_ATTEMPT") {
+      const accountId = job.accountId ?? (job.payload as any)?.accountId;
+      if (!accountId || typeof accountId !== "string") {
+        throw new Error("EASY_APPLY_ATTEMPT requires accountId");
+      }
+
+      const jobPostingId = (job.payload as any)?.jobPostingId ?? job.jobPostingId;
+      const maxStepsRaw = (job.payload as any)?.maxSteps;
+      const maxSteps =
+        typeof maxStepsRaw === "number" && Number.isFinite(maxStepsRaw)
+          ? Math.floor(maxStepsRaw)
+          : 20;
+
+      const posting =
+        typeof jobPostingId === "string"
+          ? await db.jobPosting.findUnique({ where: { id: jobPostingId } })
+          : await db.jobPosting.findFirst({
+              where: { accountId, easyApply: true },
+              orderBy: { discoveredAt: "desc" },
+            });
+
+      if (!posting) throw new Error("no eligible JobPosting found for EASY_APPLY_ATTEMPT");
+
+      const application = await db.application.create({
+        data: {
+          accountId,
+          jobPostingId: posting.id,
+          status: "in_progress",
+        },
+        select: { id: true },
+      });
+
+      const headful = process.env.HEADFUL ? process.env.HEADFUL === "1" : true;
+      const artifactDir =
+        process.env.ARTIFACT_DIR ??
+        `.local/artifacts/${accountId}/${application.id}/${Date.now().toString()}`;
+
+      await db.applicationStep.create({
+        data: {
+          applicationId: application.id,
+          name: "EASY_APPLY_DRY_RUN",
+          state: "started",
+        },
+      });
+
+      const result = await easyApplyDryRun({
+        accountId,
+        headful,
+        url: posting.url,
+        maxSteps,
+        artifactDir,
+      });
+
+      await db.applicationStep.create({
+        data: {
+          applicationId: application.id,
+          name: "EASY_APPLY_DRY_RUN",
+          state: result.kind === "reached_review" ? "succeeded" : "failed",
+          detail: result as any,
+        },
+      });
+
+      await db.application.update({
+        where: { id: application.id },
+        data: {
+          status: result.kind === "reached_review" ? "needs_review" : "failed",
+        },
+      });
+
+      if (result.kind === "blocked") {
+        await db.event.create({
+          data: {
+            runId: job.runId,
+            type: "LINKEDIN_BLOCKED",
+            payload: { blockedReason: result.reason, url: result.url },
+            accountId,
+            jobPostingId: posting.id,
+            applicationId: application.id,
+          },
+        });
+        throw new Error(`linkedin blocked: ${result.reason}`);
+      }
+      if (result.kind === "failed") {
+        throw new Error(result.error);
       }
     } else {
       // Other job types will be implemented in later PRs.

@@ -6,3 +6,6 @@ export { discoverLinkedInJobs } from "./discovery.js";
 
 export type { LinkedInJobDetail } from "./jobDetail.js";
 export { fetchLinkedInJobDetail } from "./jobDetail.js";
+
+export type { EasyApplyDryRunResult } from "./easyApply.js";
+export { easyApplyDryRun } from "./easyApply.js";

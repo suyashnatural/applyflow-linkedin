@@ -47,4 +47,20 @@ if (process.env.RUN_SYNC_DEMO === "1") {
   logger.info({ jobId }, "enqueued sync details demo job");
 }
 
+if (process.env.RUN_EASY_APPLY_DEMO === "1") {
+  const jobId = await enqueueJob({
+    type: "EASY_APPLY_ATTEMPT",
+    runId: `run-${Date.now()}`,
+    priority: 0,
+    accountId: process.env.LINKEDIN_ACCOUNT_ID,
+    payload: {
+      jobPostingId: process.env.JOB_POSTING_ID,
+      maxSteps: process.env.EASY_APPLY_MAX_STEPS
+        ? Number.parseInt(process.env.EASY_APPLY_MAX_STEPS, 10)
+        : 20,
+    },
+  });
+  logger.info({ jobId }, "enqueued easy apply dry-run job");
+}
+
 process.stdin.resume();

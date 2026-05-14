@@ -33,3 +33,9 @@
 
 - Backfill incomplete rows by running API with `RUN_SYNC_DEMO=1`.
 - Configure `LINKEDIN_SYNC_MAX_JOBS`.
+
+## Easy Apply Dry-Run (Dev)
+
+- Ensure session is logged in first (HEADFUL default is on).
+- Run API with `RUN_EASY_APPLY_DEMO=1` to enqueue an `EASY_APPLY_ATTEMPT`.
+- Optionally set `JOB_POSTING_ID` (otherwise worker picks the newest `easyApply=true` posting).

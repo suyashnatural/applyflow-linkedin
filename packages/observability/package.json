@@ -9,5 +9,8 @@
     "lint": "echo \"lint handled at root\"",
     "typecheck": "tsc -p tsconfig.json",
     "test": "node -e \"console.log('no tests yet')\""
+  },
+  "dependencies": {
+    "@applyflow/config": "0.0.0"
   }
 }

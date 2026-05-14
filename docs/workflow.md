@@ -13,3 +13,8 @@
 - `npm run lint`
 - `npm run test`
 - `npm run format`
+
+## Secrets
+
+- Use `.env` (not committed) for secrets.
+- Logs must not include secrets; logger redaction is enabled by default.

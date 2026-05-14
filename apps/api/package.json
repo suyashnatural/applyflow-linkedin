@@ -13,7 +13,10 @@
   },
   "dependencies": {
     "@applyflow/config": "0.0.0",
+    "@applyflow/db": "0.0.0",
     "@applyflow/queue": "0.0.0",
-    "@applyflow/observability": "0.0.0"
+    "@applyflow/observability": "0.0.0",
+    "@fastify/cors": "^10.1.0",
+    "fastify": "^5.5.0"
   }
 }

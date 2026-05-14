@@ -5,6 +5,7 @@ export const QueueJobTypeSchema = z.enum([
   "DISCOVER_LINKEDIN_JOBS",
   "SYNC_JOB_DETAILS",
   "EASY_APPLY_ATTEMPT",
+  "EASY_APPLY_SUBMIT",
   "AI_DRAFT_ANSWERS",
 ]);
 export type QueueJobType = z.infer<typeof QueueJobTypeSchema>;

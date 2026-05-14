@@ -4,14 +4,18 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node src/index.ts",
-    "build": "echo \"no build yet\"",
+    "dev": "next dev -p 3000",
+    "build": "next build",
     "lint": "echo \"lint handled at root\"",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node -e \"console.log('no tests yet')\""
+    "test": "node -e \"console.log('no tests yet')\"",
+    "start": "next start -p 3000"
   },
   "dependencies": {
     "@applyflow/config": "0.0.0",
-    "@applyflow/observability": "0.0.0"
+    "@applyflow/observability": "0.0.0",
+    "next": "^15.5.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
   }
 }

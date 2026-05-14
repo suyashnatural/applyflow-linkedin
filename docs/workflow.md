@@ -39,3 +39,8 @@
 - Ensure session is logged in first (HEADFUL default is on).
 - Run API with `RUN_EASY_APPLY_DEMO=1` to enqueue an `EASY_APPLY_ATTEMPT`.
 - Optionally set `JOB_POSTING_ID` (otherwise worker picks the newest `easyApply=true` posting).
+
+## Review UI (Dev)
+
+- Start API on `http://localhost:3001`: `npm run dev -w @applyflow/api`
+- Start Web on `http://localhost:3000`: `npm run dev -w @applyflow/web`

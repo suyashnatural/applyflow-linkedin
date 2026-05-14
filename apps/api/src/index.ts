@@ -1,9 +1,90 @@
 import { getConfig } from "@applyflow/config";
+import { getDb } from "@applyflow/db";
 import { logger } from "@applyflow/observability";
 import { enqueueJob } from "@applyflow/queue";
+import Fastify from "fastify";
+import cors from "@fastify/cors";
 
 const config = getConfig();
 logger.info({ env: config.nodeEnv }, "api boot");
+
+const app = Fastify({ logger: false });
+await app.register(cors, { origin: true });
+
+app.get("/healthz", async () => ({ ok: true }));
+
+app.get("/applications", async (req) => {
+  const status = (req.query as any)?.status as string | undefined;
+  const db = getDb();
+  const args: Parameters<typeof db.application.findMany>[0] = {
+    orderBy: { createdAt: "desc" },
+    take: 100,
+  };
+  if (status) args.where = { status };
+  const applications = await db.application.findMany(args);
+  return { applications };
+});
+
+app.get("/applications/:id", async (req, reply) => {
+  const id = (req.params as any).id as string;
+  const db = getDb();
+  const application = await db.application.findUnique({
+    where: { id },
+    include: { jobPosting: true, steps: { orderBy: { createdAt: "asc" } } },
+  });
+  if (!application) return reply.code(404).send({ error: "not_found" });
+  return { application };
+});
+
+app.post("/applications/:id/deny", async (req) => {
+  const id = (req.params as any).id as string;
+  const reason = (req.body as any)?.reason as string | undefined;
+  const db = getDb();
+  const application = await db.application.update({
+    where: { id },
+    data: { status: "canceled" },
+  });
+  await db.applicationStep.create({
+    data: {
+      applicationId: id,
+      name: "HUMAN_DECISION",
+      state: "denied",
+      detail: { reason: reason ?? null },
+    },
+  });
+  return { application };
+});
+
+app.post("/applications/:id/approve", async (req, reply) => {
+  const id = (req.params as any).id as string;
+  const db = getDb();
+  const application = await db.application.findUnique({ where: { id } });
+  if (!application) return reply.code(404).send({ error: "not_found" });
+
+  await db.application.update({
+    where: { id },
+    data: { status: "queued" },
+  });
+  await db.applicationStep.create({
+    data: {
+      applicationId: id,
+      name: "HUMAN_DECISION",
+      state: "approved",
+    },
+  });
+
+  const jobId = await enqueueJob({
+    type: "EASY_APPLY_SUBMIT",
+    runId: `run-${Date.now()}`,
+    priority: 0,
+    accountId: application.accountId,
+    applicationId: application.id,
+    jobPostingId: application.jobPostingId,
+    payload: { applicationId: application.id },
+  });
+
+  return { ok: true, jobId };
+});
 
 if (process.env.RUN_ENQUEUE_DEMO === "1") {
   const jobId = await enqueueJob({
@@ -63,4 +144,6 @@ if (process.env.RUN_EASY_APPLY_DEMO === "1") {
   logger.info({ jobId }, "enqueued easy apply dry-run job");
 }
 
-process.stdin.resume();
+const port = Number.parseInt(process.env.PORT ?? "3001", 10);
+await app.listen({ port, host: "0.0.0.0" });
+logger.info({ port }, "api listening");

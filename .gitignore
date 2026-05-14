@@ -9,4 +9,4 @@ build
 coverage
 *.log
 *.local
-
+*.tsbuildinfo

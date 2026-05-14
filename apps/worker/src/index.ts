@@ -250,6 +250,9 @@ for (;;) {
       if (result.kind === "failed") {
         throw new Error(result.error);
       }
+    } else if (job.type === "EASY_APPLY_SUBMIT") {
+      // Stub: submission flow lands in a later PR.
+      throw new Error("EASY_APPLY_SUBMIT not implemented yet");
     } else {
       // Other job types will be implemented in later PRs.
       logger.info({ jobId, type: job.type }, "no handler yet; completing");

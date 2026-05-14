@@ -12,7 +12,9 @@ This repo bootstraps a production-grade LinkedIn-only job search + Easy Apply au
 1. Start Postgres: `docker compose up -d`
 2. Create `.env` from `.env.example`
 3. Install dependencies: `npm i`
-4. Run web: `npm run dev`
+4. Run API: `npm run dev -w @applyflow/api`
+5. Run Web: `npm run dev -w @applyflow/web`
+6. Run Worker: `npm run dev -w @applyflow/worker`
 
 ## Workflow
 

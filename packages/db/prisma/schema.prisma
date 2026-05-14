@@ -100,3 +100,42 @@ model Event {
   @@map("events")
 }
 
+enum QueueJobStatus {
+  queued
+  running
+  succeeded
+  failed
+  canceled
+}
+
+model QueueJob {
+  id           String         @id @default(cuid())
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  type         String
+  status       QueueJobStatus @default(queued)
+  priority     Int            @default(0)
+
+  // Lease/lock
+  leaseOwner   String?
+  leasedUntil  DateTime?
+  attempts     Int            @default(0)
+  maxAttempts  Int            @default(5)
+
+  // Scheduling
+  runAfter     DateTime       @default(now())
+
+  payload      Json?
+  error        String?
+
+  // Correlation
+  runId        String
+  accountId    String?
+  jobPostingId String?
+  applicationId String?
+
+  @@index([status, runAfter, priority])
+  @@index([leaseOwner, leasedUntil])
+  @@map("queue_jobs")
+}

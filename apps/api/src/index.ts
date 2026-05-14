@@ -32,4 +32,19 @@ if (process.env.RUN_DISCOVER_DEMO === "1") {
   logger.info({ jobId }, "enqueued discover demo job");
 }
 
+if (process.env.RUN_SYNC_DEMO === "1") {
+  const jobId = await enqueueJob({
+    type: "SYNC_JOB_DETAILS",
+    runId: `run-${Date.now()}`,
+    priority: 0,
+    accountId: process.env.LINKEDIN_ACCOUNT_ID,
+    payload: {
+      maxJobs: process.env.LINKEDIN_SYNC_MAX_JOBS
+        ? Number.parseInt(process.env.LINKEDIN_SYNC_MAX_JOBS, 10)
+        : 10,
+    },
+  });
+  logger.info({ jobId }, "enqueued sync details demo job");
+}
+
 process.stdin.resume();

@@ -2,7 +2,11 @@ import { getConfig } from "@applyflow/config";
 import { logger } from "@applyflow/observability";
 import { completeJob, leaseNextJob } from "@applyflow/queue";
 import { getDb } from "@applyflow/db";
-import { discoverLinkedInJobs, ensureLinkedInSession } from "@applyflow/linkedin-automation";
+import {
+  discoverLinkedInJobs,
+  ensureLinkedInSession,
+  fetchLinkedInJobDetail,
+} from "@applyflow/linkedin-automation";
 
 const config = getConfig();
 logger.info({ env: config.nodeEnv }, "worker boot");
@@ -97,6 +101,66 @@ for (;;) {
             linkedInJobId: card.linkedInJobId,
             url: card.url,
             easyApply: false,
+          },
+        });
+      }
+    } else if (job.type === "SYNC_JOB_DETAILS") {
+      const accountId = job.accountId ?? (job.payload as any)?.accountId;
+      if (!accountId || typeof accountId !== "string") {
+        throw new Error("SYNC_JOB_DETAILS requires accountId");
+      }
+
+      const maxJobsRaw = (job.payload as any)?.maxJobs;
+      const maxJobs =
+        typeof maxJobsRaw === "number" && Number.isFinite(maxJobsRaw) ? Math.floor(maxJobsRaw) : 10;
+
+      const headful = process.env.HEADFUL === "1";
+
+      const candidates = await db.jobPosting.findMany({
+        where: {
+          accountId,
+          OR: [{ title: null }, { companyName: null }, { location: null }, { description: null }],
+        },
+        orderBy: { discoveredAt: "desc" },
+        take: maxJobs,
+      });
+
+      logger.info(
+        { jobId, accountId, count: candidates.length, maxJobs },
+        "sync job details: selected candidates"
+      );
+
+      for (const posting of candidates) {
+        const detail = await fetchLinkedInJobDetail({
+          accountId,
+          headful,
+          url: posting.url,
+        });
+
+        if (detail.blockedReason) {
+          await db.event.create({
+            data: {
+              runId: job.runId,
+              type: "LINKEDIN_BLOCKED",
+              payload: { blockedReason: detail.blockedReason, url: detail.url },
+              accountId,
+              jobPostingId: posting.id,
+            },
+          });
+          throw new Error(`linkedin blocked: ${detail.blockedReason}`);
+        }
+
+        await db.jobPosting.update({
+          where: { id: posting.id },
+          data: {
+            url: detail.url,
+            title: detail.title ?? posting.title,
+            companyName: detail.companyName ?? posting.companyName,
+            location: detail.location ?? posting.location,
+            workplaceType: detail.workplaceType ?? posting.workplaceType,
+            description: detail.description ?? posting.description,
+            easyApply: detail.easyApply,
+            lastSeenAt: new Date(),
           },
         });
       }

@@ -2,6 +2,7 @@ import { getConfig } from "@applyflow/config";
 import { logger } from "@applyflow/observability";
 import { completeJob, leaseNextJob } from "@applyflow/queue";
 import { getDb } from "@applyflow/db";
+import { draftAnswers, loadCandidateProfile } from "@applyflow/ai";
 import {
   discoverLinkedInJobs,
   easyApplyDryRun,
@@ -15,6 +16,7 @@ logger.info({ env: config.nodeEnv }, "worker boot");
 const leaseOwner = process.env.WORKER_ID ?? `worker-${process.pid}`;
 const pollMs = Number.parseInt(process.env.WORKER_POLL_MS ?? "1000", 10);
 const leaseMs = Number.parseInt(process.env.WORKER_LEASE_MS ?? "30000", 10);
+const candidateProfilePath = process.env.CANDIDATE_PROFILE_PATH;
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -253,6 +255,47 @@ for (;;) {
     } else if (job.type === "EASY_APPLY_SUBMIT") {
       // Stub: submission flow lands in a later PR.
       throw new Error("EASY_APPLY_SUBMIT not implemented yet");
+    } else if (job.type === "AI_DRAFT_ANSWERS") {
+      const applicationId = job.applicationId ?? (job.payload as any)?.applicationId;
+      if (!applicationId || typeof applicationId !== "string") {
+        throw new Error("AI_DRAFT_ANSWERS requires applicationId");
+      }
+      if (!candidateProfilePath) {
+        throw new Error("CANDIDATE_PROFILE_PATH is required for AI_DRAFT_ANSWERS");
+      }
+
+      const dbApplication = await db.application.findUnique({
+        where: { id: applicationId },
+        include: { steps: { orderBy: { createdAt: "desc" } } },
+      });
+      if (!dbApplication) throw new Error("application not found");
+
+      const dryRunStep = dbApplication.steps.find((s) => s.name === "EASY_APPLY_DRY_RUN");
+      if (!dryRunStep?.detail) throw new Error("missing EASY_APPLY_DRY_RUN detail");
+
+      const detail = dryRunStep.detail as any;
+      const questionsRaw = detail.questions as any[] | undefined;
+      const questions = Array.isArray(questionsRaw)
+        ? questionsRaw.map((q, idx) => ({
+            id: typeof q.id === "string" ? q.id : `q_${idx}`,
+            label: String(q.label ?? ""),
+            kind: q.kind ?? "unknown",
+            required: Boolean(q.required),
+            options: Array.isArray(q.options) ? q.options.map(String) : undefined,
+          }))
+        : [];
+
+      const profile = loadCandidateProfile(candidateProfilePath);
+      const result = await draftAnswers({ profile, questions });
+
+      await db.applicationStep.create({
+        data: {
+          applicationId,
+          name: "AI_DRAFT_ANSWERS",
+          state: "succeeded",
+          detail: result as any,
+        },
+      });
     } else {
       // Other job types will be implemented in later PRs.
       logger.info({ jobId, type: job.type }, "no handler yet; completing");

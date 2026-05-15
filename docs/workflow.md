@@ -44,3 +44,9 @@
 
 - Start API on `http://localhost:3001`: `npm run dev -w @applyflow/api`
 - Start Web on `http://localhost:3000`: `npm run dev -w @applyflow/web`
+
+## AI Draft Answers (Dev)
+
+- Create `.local/candidate-profile.json` based on `.local/candidate-profile.example.json`.
+- Set `OPENAI_API_KEY` and `CANDIDATE_PROFILE_PATH` in `.env`.
+- Enqueue AI drafting by running API with `RUN_AI_DRAFT_DEMO=1` and `APPLICATION_ID=<id>`.

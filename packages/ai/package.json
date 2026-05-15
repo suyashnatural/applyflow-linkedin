@@ -1,22 +1,19 @@
 {
-  "name": "@applyflow/worker",
+  "name": "@applyflow/ai",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "dev": "node --enable-source-maps src/index.ts",
     "build": "echo \"no build yet\"",
     "lint": "echo \"lint handled at root\"",
     "typecheck": "tsc -p tsconfig.json",
     "test": "node -e \"console.log('no tests yet')\""
   },
   "dependencies": {
-    "@applyflow/ai": "0.0.0",
     "@applyflow/config": "0.0.0",
-    "@applyflow/db": "0.0.0",
-    "@applyflow/linkedin-automation": "0.0.0",
-    "@applyflow/queue": "0.0.0",
-    "@applyflow/observability": "0.0.0"
+    "openai": "^5.12.0",
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.24.6"
   }
 }

@@ -12,3 +12,6 @@ export { easyApplyDryRun } from "./easyApply.js";
 
 export type { EasyApplySubmitResult, SubmitAnswer } from "./easyApplySubmit.js";
 export { submitEasyApply } from "./easyApplySubmit.js";
+
+export type { ArtifactBundle } from "./artifacts.js";
+export { captureScreenshot, ensureDir, startTrace, stopTrace } from "./artifacts.js";

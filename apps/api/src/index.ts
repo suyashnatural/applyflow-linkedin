@@ -48,6 +48,65 @@ app.get("/applications/:id", async (req, reply) => {
   return { application };
 });
 
+app.get("/applications/:id/answers", async (req, reply) => {
+  const id = (req.params as any).id as string;
+  const db = getDb();
+  const application = await db.application.findUnique({ where: { id } });
+  if (!application) return reply.code(404).send({ error: "not_found" });
+
+  const answers = await db.applicationAnswer.findMany({
+    where: { applicationId: id },
+    orderBy: { questionLabel: "asc" },
+  });
+  return { answers };
+});
+
+app.post("/applications/:id/answers/upsert", async (req, reply) => {
+  const applicationId = (req.params as any).id as string;
+  const body = (req.body as any) ?? {};
+  const questionId = body.questionId as string | undefined;
+  const questionLabel = body.questionLabel as string | undefined;
+  const answer = body.answer as string | undefined;
+  const required = Boolean(body.required);
+  const approved = Boolean(body.approved);
+  const requiresApproval = Boolean(body.requiresApproval);
+  const confidence = typeof body.confidence === "number" ? body.confidence : 0;
+
+  if (!questionId || !questionLabel || !answer) {
+    return reply.code(400).send({ error: "missing_fields" });
+  }
+
+  const db = getDb();
+  const application = await db.application.findUnique({ where: { id: applicationId } });
+  if (!application) return reply.code(404).send({ error: "not_found" });
+
+  const row = await db.applicationAnswer.upsert({
+    where: { applicationId_questionId: { applicationId, questionId } },
+    create: {
+      applicationId,
+      questionId,
+      questionLabel,
+      required,
+      answer,
+      confidence,
+      requiresApproval,
+      approved,
+      source: "manual",
+    },
+    update: {
+      questionLabel,
+      required,
+      answer,
+      confidence,
+      requiresApproval,
+      approved,
+      source: "manual",
+    },
+  });
+
+  return { answer: row };
+});
+
 app.post("/applications/:id/deny", async (req) => {
   const id = (req.params as any).id as string;
   const reason = (req.body as any)?.reason as string | undefined;
@@ -72,6 +131,30 @@ app.post("/applications/:id/approve", async (req, reply) => {
   const db = getDb();
   const application = await db.application.findUnique({ where: { id } });
   if (!application) return reply.code(404).send({ error: "not_found" });
+
+  // Gate approval: all required questions must be approved.
+  const dryRunStep = await db.applicationStep.findFirst({
+    where: { applicationId: id, name: "EASY_APPLY_DRY_RUN" },
+    orderBy: { createdAt: "desc" },
+  });
+  const questions = ((dryRunStep?.detail as any)?.questions as any[]) ?? [];
+  const requiredLabels = new Set<string>(
+    questions
+      .filter((q) => Boolean(q?.required) && typeof q?.label === "string")
+      .map((q) => String(q.label))
+  );
+  if (requiredLabels.size > 0) {
+    const answers = await db.applicationAnswer.findMany({ where: { applicationId: id } });
+    const approvedLabels = new Set(
+      answers
+        .filter((a) => a.approved && a.answer !== "NEEDS_HUMAN_INPUT")
+        .map((a) => a.questionLabel)
+    );
+    const missing = [...requiredLabels].filter((l) => !approvedLabels.has(l));
+    if (missing.length > 0) {
+      return reply.code(409).send({ error: "not_ready", missingRequired: missing.slice(0, 20) });
+    }
+  }
 
   await db.application.update({
     where: { id },

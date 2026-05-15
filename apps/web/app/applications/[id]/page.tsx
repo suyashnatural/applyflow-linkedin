@@ -15,6 +15,19 @@ type ApplicationStep = {
   detail: unknown;
 };
 
+type ApplicationAnswer = {
+  id: string;
+  questionId: string;
+  questionLabel: string;
+  required: boolean;
+  answer: string;
+  confidence: number;
+  requiresApproval: boolean;
+  approved: boolean;
+  source: string;
+  updatedAt: string;
+};
+
 type Application = {
   id: string;
   status: string;
@@ -34,6 +47,14 @@ async function getApplication(id: string): Promise<Application> {
   return json.application;
 }
 
+async function getAnswers(id: string): Promise<ApplicationAnswer[]> {
+  const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
+  const res = await fetch(`${baseUrl}/applications/${id}/answers`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`failed to fetch answers: ${res.status}`);
+  const json = (await res.json()) as { answers: ApplicationAnswer[] };
+  return json.answers ?? [];
+}
+
 async function postJson(path: string, body: unknown): Promise<void> {
   const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
   const res = await fetch(`${baseUrl}${path}`, {
@@ -47,12 +68,29 @@ async function postJson(path: string, body: unknown): Promise<void> {
 export default async function ApplicationPage(props: { params: Promise<{ id: string }> }) {
   const { id } = await props.params;
   const application = await getApplication(id);
+  const answers = await getAnswers(id);
   const aiStep = application.steps.find((s) => s.name === "AI_DRAFT_ANSWERS");
   const latestNonSuccess = [...application.steps].reverse().find((s) => s.state !== "succeeded");
   const latestReason =
     latestNonSuccess && latestNonSuccess.detail && typeof latestNonSuccess.detail === "object"
       ? ((latestNonSuccess.detail as any).reason ?? (latestNonSuccess.detail as any).error ?? null)
       : null;
+
+  const dryRunStep = application.steps.find((s) => s.name === "EASY_APPLY_DRY_RUN");
+  const questionsRaw = (dryRunStep?.detail as any)?.questions as any[] | undefined;
+  const requiredLabels = new Set<string>();
+  if (Array.isArray(questionsRaw)) {
+    for (const q of questionsRaw) {
+      if (q?.required && typeof q?.label === "string") requiredLabels.add(String(q.label));
+    }
+  }
+  const approvedLabels = new Set(
+    answers
+      .filter((a) => a.approved && a.answer !== "NEEDS_HUMAN_INPUT")
+      .map((a) => a.questionLabel)
+  );
+  const missingRequired = [...requiredLabels].filter((l) => !approvedLabels.has(l));
+  const canSubmit = missingRequired.length === 0;
 
   return (
     <main style={{ padding: 24, maxWidth: 960, margin: "0 auto" }}>
@@ -91,10 +129,13 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
           <form
             action={async () => {
               "use server";
+              if (!canSubmit) return;
               await postJson(`/applications/${application.id}/approve`, {});
             }}
           >
-            <button style={{ padding: "8px 12px" }}>Approve submit</button>
+            <button style={{ padding: "8px 12px" }} disabled={!canSubmit}>
+              Approve submit
+            </button>
           </form>
 
           <form
@@ -107,6 +148,127 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
           </form>
         </div>
       </section>
+
+      {!canSubmit ? (
+        <section
+          style={{
+            marginTop: 16,
+            border: "1px solid #f0c36d",
+            borderRadius: 12,
+            padding: 12,
+            background: "#fff9e6",
+          }}
+        >
+          <div style={{ fontWeight: 600 }}>Missing required approvals</div>
+          <div style={{ fontSize: 12, color: "#6b4a00" }}>
+            Approve answers for required questions before submitting.
+          </div>
+          <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
+            {missingRequired.slice(0, 20).map((l) => (
+              <li key={l} style={{ fontSize: 12 }}>
+                {l}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      <h2 style={{ marginTop: 24 }}>Answers</h2>
+      <div style={{ display: "grid", gap: 12 }}>
+        {answers
+          .slice()
+          .sort(
+            (a, b) =>
+              Number(b.required) - Number(a.required) ||
+              a.questionLabel.localeCompare(b.questionLabel)
+          )
+          .map((a) => (
+            <section key={a.id} style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                <div>
+                  <div style={{ fontWeight: 600 }}>
+                    {a.questionLabel}
+                    {a.required ? <span style={{ color: "#b42318" }}> *</span> : null}
+                  </div>
+                  <div style={{ fontSize: 12, color: "#777" }}>
+                    confidence: {Number.isFinite(a.confidence) ? a.confidence.toFixed(2) : "0.00"} ·{" "}
+                    source: {a.source}
+                  </div>
+                </div>
+                <div style={{ textAlign: "right", fontSize: 12, color: "#555" }}>
+                  updated: {new Date(a.updatedAt).toLocaleString()}
+                </div>
+              </div>
+
+              <form
+                action={async (formData) => {
+                  "use server";
+                  const questionId = String(formData.get("questionId") ?? "");
+                  const questionLabel = String(formData.get("questionLabel") ?? "");
+                  const answer = String(formData.get("answer") ?? "");
+                  const approved = formData.get("approved") === "on";
+                  const required = formData.get("required") === "on";
+                  const requiresApproval = formData.get("requiresApproval") === "on";
+                  const confidence = Number(formData.get("confidence") ?? 0);
+                  await postJson(`/applications/${application.id}/answers/upsert`, {
+                    questionId,
+                    questionLabel,
+                    answer,
+                    approved,
+                    required,
+                    requiresApproval,
+                    confidence,
+                  });
+                }}
+              >
+                <input type="hidden" name="questionId" value={a.questionId} />
+                <input type="hidden" name="questionLabel" value={a.questionLabel} />
+                <input type="hidden" name="confidence" value={a.confidence} />
+                <label style={{ display: "block", marginTop: 8, fontSize: 12, color: "#555" }}>
+                  Draft answer
+                </label>
+                <textarea
+                  name="answer"
+                  defaultValue={a.answer}
+                  rows={4}
+                  style={{
+                    marginTop: 6,
+                    width: "100%",
+                    padding: 10,
+                    borderRadius: 10,
+                    border: "1px solid #ddd",
+                    fontFamily: "inherit",
+                  }}
+                />
+                <div style={{ display: "flex", gap: 16, marginTop: 10, alignItems: "center" }}>
+                  <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
+                    <input type="checkbox" name="approved" defaultChecked={a.approved} />
+                    Approved
+                  </label>
+                  <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
+                    <input
+                      type="checkbox"
+                      name="requiresApproval"
+                      defaultChecked={a.requiresApproval}
+                    />
+                    Requires approval
+                  </label>
+                  <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
+                    <input type="checkbox" name="required" defaultChecked={a.required} />
+                    Required
+                  </label>
+                  <button style={{ padding: "6px 10px" }}>Save</button>
+                </div>
+              </form>
+            </section>
+          ))}
+
+        {answers.length === 0 ? (
+          <div style={{ padding: 16, border: "1px dashed #ccc", borderRadius: 12, color: "#555" }}>
+            No answers found yet. Run `AI_DRAFT_ANSWERS` for this application.
+          </div>
+        ) : null}
+      </div>
 
       {latestNonSuccess ? (
         <section

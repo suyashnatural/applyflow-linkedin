@@ -57,6 +57,7 @@ model Application {
   jobPosting    JobPosting @relation(fields: [jobPostingId], references: [id])
 
   steps         ApplicationStep[]
+  answers       ApplicationAnswer[]
   events        Event[]
 
   @@index([accountId, createdAt])
@@ -77,6 +78,48 @@ model ApplicationStep {
 
   @@index([applicationId, createdAt])
   @@map("application_steps")
+}
+
+model ApplicationAnswer {
+  id            String   @id @default(cuid())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id])
+
+  // Best-effort stable identifiers
+  questionId    String
+  questionLabel String
+  required      Boolean @default(false)
+
+  // Draft/edited answer
+  answer        String
+  confidence    Float   @default(0)
+  requiresApproval Boolean @default(true)
+  approved      Boolean @default(false)
+
+  source        String  @default("draft") // draft|manual|template
+
+  @@unique([applicationId, questionId])
+  @@index([applicationId, approved])
+  @@map("application_answers")
+}
+
+model AnswerTemplate {
+  id            String   @id @default(cuid())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  accountId     String?
+  // normalized question label fingerprint (lowercased + collapsed whitespace)
+  fingerprint   String
+
+  answer        String
+  approved      Boolean @default(true)
+
+  @@unique([accountId, fingerprint])
+  @@map("answer_templates")
 }
 
 model Event {

@@ -305,29 +305,44 @@ for (;;) {
 
       const dryRunStep = application.steps.find((s) => s.name === "EASY_APPLY_DRY_RUN");
       const questionsRaw = (dryRunStep?.detail as any)?.questions as any[] | undefined;
-      const questionIdToLabel = new Map<string, string>();
+      const requiredLabels = new Set<string>();
       if (Array.isArray(questionsRaw)) {
         for (const q of questionsRaw) {
-          if (typeof q?.id === "string" && typeof q?.label === "string") {
-            questionIdToLabel.set(q.id, q.label);
-          }
+          if (q?.required && typeof q?.label === "string") requiredLabels.add(String(q.label));
         }
       }
 
-      const aiStep = application.steps.find((s) => s.name === "AI_DRAFT_ANSWERS");
-      if (!aiStep?.detail) {
-        throw new Error("missing AI_DRAFT_ANSWERS (cannot submit without drafts)");
+      const storedAnswers = await db.applicationAnswer.findMany({
+        where: { applicationId },
+      });
+
+      // Gate: do not submit unless every required question has an approved answer.
+      if (requiredLabels.size > 0) {
+        const approvedLabels = new Set(
+          storedAnswers
+            .filter((a) => a.approved && a.answer !== "NEEDS_HUMAN_INPUT")
+            .map((a) => a.questionLabel)
+        );
+        const missing = [...requiredLabels].filter((l) => !approvedLabels.has(l));
+        if (missing.length > 0) {
+          await db.application.update({
+            where: { id: applicationId },
+            data: { status: "needs_review" },
+          });
+          throw new ApplyFlowError({
+            code: "unknown",
+            message: `submit blocked: missing approved required answers (${missing.slice(0, 3).join(", ")})`,
+            retryable: false,
+          });
+        }
       }
 
-      const answers = (aiStep.detail as any)?.answers as any[] | undefined;
-      if (!Array.isArray(answers)) throw new Error("invalid AI_DRAFT_ANSWERS detail");
-
-      const submitAnswers = answers
-        .filter((a) => typeof a?.answer === "string" && typeof a?.questionId === "string")
+      const submitAnswers = storedAnswers
+        .filter((a) => a.approved && a.answer !== "NEEDS_HUMAN_INPUT")
         .map((a) => ({
-          questionLabel: questionIdToLabel.get(String(a.questionId)) ?? String(a.questionId),
-          answer: String(a.answer),
-          requiresApproval: Boolean(a.requiresApproval),
+          questionLabel: a.questionLabel,
+          answer: a.answer,
+          requiresApproval: a.requiresApproval,
         }));
 
       const headful = process.env.HEADFUL ? process.env.HEADFUL === "1" : true;
@@ -434,6 +449,42 @@ for (;;) {
 
       const profile = loadCandidateProfile(candidateProfilePath);
       const result = await draftAnswers({ profile, questions });
+
+      // Upsert drafts into application_answers (not approved by default).
+      for (const q of questions) {
+        const draft = result.answers.find((a) => a.questionId === q.id);
+        if (!draft) continue;
+        const existing = await db.applicationAnswer.findUnique({
+          where: { applicationId_questionId: { applicationId, questionId: q.id } },
+        });
+        const keepApproved =
+          Boolean(existing?.approved) &&
+          typeof existing?.answer === "string" &&
+          existing.answer === draft.answer;
+        await db.applicationAnswer.upsert({
+          where: { applicationId_questionId: { applicationId, questionId: q.id } },
+          create: {
+            applicationId,
+            questionId: q.id,
+            questionLabel: q.label,
+            required: q.required,
+            answer: draft.answer,
+            confidence: draft.confidence,
+            requiresApproval: draft.requiresApproval,
+            approved: false,
+            source: "draft",
+          },
+          update: {
+            questionLabel: q.label,
+            required: q.required,
+            answer: draft.answer,
+            confidence: draft.confidence,
+            requiresApproval: draft.requiresApproval,
+            approved: keepApproved,
+            source: "draft",
+          },
+        });
+      }
 
       await db.applicationStep.create({
         data: {

@@ -28,6 +28,11 @@ type ApplicationAnswer = {
   updatedAt: string;
 };
 
+type SubmitReadiness = {
+  ready: boolean;
+  missingRequired: string[];
+};
+
 type Application = {
   id: string;
   status: string;
@@ -55,6 +60,14 @@ async function getAnswers(id: string): Promise<ApplicationAnswer[]> {
   return json.answers ?? [];
 }
 
+async function getReadiness(id: string): Promise<SubmitReadiness> {
+  const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
+  const res = await fetch(`${baseUrl}/applications/${id}/readiness`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`failed to fetch readiness: ${res.status}`);
+  const json = (await res.json()) as { readiness: SubmitReadiness };
+  return json.readiness;
+}
+
 async function postJson(path: string, body: unknown): Promise<void> {
   const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
   const res = await fetch(`${baseUrl}${path}`, {
@@ -69,6 +82,7 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
   const { id } = await props.params;
   const application = await getApplication(id);
   const answers = await getAnswers(id);
+  const readiness = await getReadiness(id);
   const aiStep = application.steps.find((s) => s.name === "AI_DRAFT_ANSWERS");
   const latestNonSuccess = [...application.steps].reverse().find((s) => s.state !== "succeeded");
   const latestReason =
@@ -76,21 +90,8 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
       ? ((latestNonSuccess.detail as any).reason ?? (latestNonSuccess.detail as any).error ?? null)
       : null;
 
-  const dryRunStep = application.steps.find((s) => s.name === "EASY_APPLY_DRY_RUN");
-  const questionsRaw = (dryRunStep?.detail as any)?.questions as any[] | undefined;
-  const requiredLabels = new Set<string>();
-  if (Array.isArray(questionsRaw)) {
-    for (const q of questionsRaw) {
-      if (q?.required && typeof q?.label === "string") requiredLabels.add(String(q.label));
-    }
-  }
-  const approvedLabels = new Set(
-    answers
-      .filter((a) => a.approved && a.answer !== "NEEDS_HUMAN_INPUT")
-      .map((a) => a.questionLabel)
-  );
-  const missingRequired = [...requiredLabels].filter((l) => !approvedLabels.has(l));
-  const canSubmit = missingRequired.length === 0;
+  const missingRequired = readiness.missingRequired ?? [];
+  const canSubmit = readiness.ready;
 
   return (
     <main style={{ padding: 24, maxWidth: 960, margin: "0 auto" }}>
@@ -159,9 +160,9 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
             background: "#fff9e6",
           }}
         >
-          <div style={{ fontWeight: 600 }}>Missing required approvals</div>
+          <div style={{ fontWeight: 600 }}>Not ready to submit</div>
           <div style={{ fontSize: 12, color: "#6b4a00" }}>
-            Approve answers for required questions before submitting.
+            Approve answers for required questions (or apply templates) before submitting.
           </div>
           <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
             {missingRequired.slice(0, 20).map((l) => (

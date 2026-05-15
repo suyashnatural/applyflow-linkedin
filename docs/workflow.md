@@ -59,3 +59,4 @@
 
 - Automation stops and marks `needs_review` when required inputs are missing or answers are not confidently auto-fillable.
 - No in-modal waiting/resume in MVP; re-run after human fixes or improved profile/answers.
+- Optional auto-submit: set `AUTO_SUBMIT_ON_READY=1` to auto-enqueue submit when an application becomes ready (e.g., after saving the last required approved answer or applying a template).

@@ -120,6 +120,27 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
           </pre>
         </>
       ) : null}
+
+      {application.steps.some((s) => (s.detail as any)?.artifactDir) ? (
+        <>
+          <h3 style={{ marginTop: 16 }}>Artifacts</h3>
+          <div style={{ display: "grid", gap: 8 }}>
+            {application.steps
+              .filter((s) => Boolean((s.detail as any)?.artifactDir))
+              .map((s) => (
+                <div
+                  key={`${s.id}-artifact`}
+                  style={{ padding: 12, border: "1px solid #eee", borderRadius: 12 }}
+                >
+                  <div style={{ fontWeight: 600 }}>{s.name}</div>
+                  <div style={{ fontSize: 12, color: "#555" }}>
+                    artifactDir: {(s.detail as any).artifactDir}
+                  </div>
+                </div>
+              ))}
+          </div>
+        </>
+      ) : null}
       <div style={{ display: "grid", gap: 12 }}>
         {application.steps.map((s) => (
           <div key={s.id} style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}>

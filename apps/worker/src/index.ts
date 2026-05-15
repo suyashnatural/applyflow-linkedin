@@ -221,12 +221,25 @@ for (;;) {
         artifactDir,
       });
 
+      if (result.kind !== "reached_review") {
+        await db.event.create({
+          data: {
+            runId: job.runId,
+            type: "EASY_APPLY_DRY_RUN_RESULT",
+            payload: { kind: result.kind, url: result.url, artifactDir },
+            accountId,
+            jobPostingId: posting.id,
+            applicationId: application.id,
+          },
+        });
+      }
+
       await db.applicationStep.create({
         data: {
           applicationId: application.id,
           name: "EASY_APPLY_DRY_RUN",
           state: result.kind === "reached_review" ? "succeeded" : "failed",
-          detail: result as any,
+          detail: { ...result, artifactDir } as any,
         },
       });
 
@@ -313,12 +326,25 @@ for (;;) {
         maxSteps: 30,
       });
 
+      if (result.kind !== "submitted") {
+        await db.event.create({
+          data: {
+            runId: job.runId,
+            type: "EASY_APPLY_SUBMIT_RESULT",
+            payload: { kind: result.kind, url: result.url, artifactDir },
+            accountId: application.accountId,
+            jobPostingId: application.jobPostingId,
+            applicationId,
+          },
+        });
+      }
+
       await db.applicationStep.create({
         data: {
           applicationId,
           name: "EASY_APPLY_SUBMIT",
           state: result.kind === "submitted" ? "succeeded" : "failed",
-          detail: result as any,
+          detail: { ...result, artifactDir } as any,
         },
       });
 

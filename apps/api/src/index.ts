@@ -13,6 +13,18 @@ await app.register(cors, { origin: true });
 
 app.get("/healthz", async () => ({ ok: true }));
 
+app.get("/healthz/db", async (_req, reply) => {
+  const db = getDb();
+  try {
+    // lightweight query
+    await db.$queryRaw`SELECT 1`;
+    return { ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return reply.code(503).send({ ok: false, error: message });
+  }
+});
+
 app.get("/applications", async (req) => {
   const status = (req.query as any)?.status as string | undefined;
   const db = getDb();

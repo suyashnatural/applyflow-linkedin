@@ -45,6 +45,10 @@
 - Start API on `http://localhost:3001`: `npm run dev -w @applyflow/api`
 - Start Web on `http://localhost:3000`: `npm run dev -w @applyflow/web`
 
+## Runbook
+
+- Full local workflow: `docs/runbook-local.md`
+
 ## AI Draft Answers (Dev)
 
 - Create `.local/candidate-profile.json` based on `.local/candidate-profile.example.json`.

@@ -144,6 +144,19 @@ if (process.env.RUN_EASY_APPLY_DEMO === "1") {
   logger.info({ jobId }, "enqueued easy apply dry-run job");
 }
 
+if (process.env.RUN_AI_DRAFT_DEMO === "1") {
+  const applicationId = process.env.APPLICATION_ID;
+  if (!applicationId) throw new Error("APPLICATION_ID is required for RUN_AI_DRAFT_DEMO");
+  const jobId = await enqueueJob({
+    type: "AI_DRAFT_ANSWERS",
+    runId: `run-${Date.now()}`,
+    priority: 0,
+    applicationId,
+    payload: { applicationId },
+  });
+  logger.info({ jobId }, "enqueued ai draft answers job");
+}
+
 const port = Number.parseInt(process.env.PORT ?? "3001", 10);
 await app.listen({ port, host: "0.0.0.0" });
 logger.info({ port }, "api listening");

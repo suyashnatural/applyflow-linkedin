@@ -8,13 +8,95 @@ import { getConfig } from "@applyflow/config";
 export type EasyApplyDryRunResult =
   | { kind: "not_easy_apply"; url: string }
   | { kind: "blocked"; url: string; reason: "login_required" | "checkpoint" }
-  | { kind: "reached_review"; url: string; steps: number }
+  | { kind: "reached_review"; url: string; steps: number; questions: CapturedQuestion[] }
   | { kind: "failed"; url: string; error: string; steps: number; artifactDir?: string };
+
+export type CapturedQuestion = {
+  id: string;
+  label: string;
+  kind: "text" | "textarea" | "select" | "radio" | "checkbox" | "unknown";
+  required: boolean;
+  options?: string[];
+};
 
 function classifyUrl(url: string): "ok" | "login" | "checkpoint" {
   if (url.includes("/checkpoint/")) return "checkpoint";
   if (url.includes("/login")) return "login";
   return "ok";
+}
+
+async function captureVisibleQuestions(page: Page): Promise<CapturedQuestion[]> {
+  const raw = await page.evaluate(() => {
+    const out: Array<{
+      id: string;
+      label: string;
+      kind: "text" | "textarea" | "select" | "radio" | "checkbox" | "unknown";
+      required: boolean;
+      options?: string[];
+    }> = [];
+
+    // Heuristic: LinkedIn Easy Apply modal uses forms with labels near inputs.
+    // We capture anything with aria-label or associated label text.
+    const candidates = Array.from(document.querySelectorAll("input, textarea, select")) as Array<
+      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+    >;
+
+    let seq = 0;
+    const seen = new Set<string>();
+
+    function getLabel(el: Element): string | null {
+      const aria = el.getAttribute("aria-label");
+      if (aria && aria.trim()) return aria.trim();
+
+      const id = (el as HTMLElement).id;
+      if (id) {
+        const l = document.querySelector(`label[for='${CSS.escape(id)}']`);
+        if (l?.textContent) return l.textContent.trim();
+      }
+
+      const wrapper = el.closest("label");
+      if (wrapper?.textContent) return wrapper.textContent.trim();
+
+      // Try a nearby preceding label-ish element
+      const container = el.closest("div");
+      const text = container?.querySelector("label, span, p")?.textContent;
+      return text ? text.trim() : null;
+    }
+
+    for (const el of candidates) {
+      const label = getLabel(el);
+      if (!label) continue;
+      const key = `${label}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const required = (el as any).required === true || el.getAttribute("aria-required") === "true";
+
+      let kind: CapturedQuestion["kind"] = "unknown";
+      let options: string[] | undefined;
+
+      if (el.tagName === "TEXTAREA") kind = "textarea";
+      else if (el.tagName === "SELECT") {
+        kind = "select";
+        options = Array.from((el as HTMLSelectElement).options)
+          .map((o) => o.textContent?.trim() ?? "")
+          .filter(Boolean);
+      } else if (el.tagName === "INPUT") {
+        const t = (el as HTMLInputElement).type;
+        if (t === "checkbox") kind = "checkbox";
+        else if (t === "radio") kind = "radio";
+        else kind = "text";
+      }
+
+      const id = (el as HTMLElement).id || `q_${seq++}`;
+      const q: any = { id, label, kind, required };
+      if (options && options.length > 0) q.options = options;
+      out.push(q);
+    }
+
+    return out;
+  });
+  return raw as CapturedQuestion[];
 }
 
 async function maybeSaveArtifacts(params: {
@@ -65,18 +147,25 @@ export async function easyApplyDryRun(params: {
 
     await easyApplyButton.click({ timeout: 10_000 });
     steps++;
+    const questions: CapturedQuestion[] = [];
 
     // Attempt to click through the modal until we reach a review-like step.
     for (; steps < params.maxSteps; steps++) {
+      // Capture questions visible at each step (dedup by label).
+      const captured = await captureVisibleQuestions(page);
+      for (const q of captured) {
+        if (!questions.some((x) => x.label === q.label)) questions.push(q);
+      }
+
       const review = page.locator(':is(h2,h3):has-text("Review")').first();
       if ((await review.count()) > 0) {
-        return { kind: "reached_review", url: page.url(), steps };
+        return { kind: "reached_review", url: page.url(), steps, questions };
       }
 
       const submit = page.locator('button:has-text("Submit application")').first();
       if ((await submit.count()) > 0) {
         // Treat submit as equivalent to review stop point for dry-run.
-        return { kind: "reached_review", url: page.url(), steps };
+        return { kind: "reached_review", url: page.url(), steps, questions };
       }
 
       const next = page

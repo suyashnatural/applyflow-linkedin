@@ -50,6 +50,37 @@ app.get("/applications/:id", async (req, reply) => {
   return { application };
 });
 
+async function computeSubmitReadiness(params: {
+  db: ReturnType<typeof getDb>;
+  applicationId: string;
+}): Promise<{ ready: boolean; missingRequired: string[] }> {
+  const dryRunStep = await params.db.applicationStep.findFirst({
+    where: { applicationId: params.applicationId, name: "EASY_APPLY_DRY_RUN" },
+    orderBy: { createdAt: "desc" },
+  });
+
+  const questions = ((dryRunStep?.detail as any)?.questions as any[]) ?? [];
+  const required = questions
+    .filter((q) => Boolean(q?.required) && typeof q?.label === "string")
+    .map((q) => String(q.label));
+  if (required.length === 0) return { ready: true, missingRequired: [] };
+
+  const answers = await params.db.applicationAnswer.findMany({
+    where: { applicationId: params.applicationId },
+  });
+
+  const approvedFingerprints = new Set(
+    answers
+      .filter((a) => a.approved && a.answer !== "NEEDS_HUMAN_INPUT")
+      .map((a) => fingerprintQuestionLabel(a.questionLabel))
+  );
+
+  const missing = required.filter(
+    (label) => !approvedFingerprints.has(fingerprintQuestionLabel(label))
+  );
+  return { ready: missing.length === 0, missingRequired: missing.slice(0, 50) };
+}
+
 app.get("/applications/:id/answers", async (req, reply) => {
   const id = (req.params as any).id as string;
   const db = getDb();
@@ -61,6 +92,16 @@ app.get("/applications/:id/answers", async (req, reply) => {
     orderBy: { questionLabel: "asc" },
   });
   return { answers };
+});
+
+app.get("/applications/:id/readiness", async (req, reply) => {
+  const id = (req.params as any).id as string;
+  const db = getDb();
+  const application = await db.application.findUnique({ where: { id } });
+  if (!application) return reply.code(404).send({ error: "not_found" });
+
+  const readiness = await computeSubmitReadiness({ db, applicationId: id });
+  return { readiness };
 });
 
 app.post("/applications/:id/answers/upsert", async (req, reply) => {
@@ -128,7 +169,37 @@ app.post("/applications/:id/answers/upsert", async (req, reply) => {
     return answerRow;
   });
 
-  return { answer: row };
+  const readiness = await computeSubmitReadiness({ db, applicationId });
+
+  if (readiness.ready && process.env.AUTO_SUBMIT_ON_READY === "1") {
+    const applicationFresh = await db.application.findUnique({ where: { id: applicationId } });
+    if (applicationFresh && applicationFresh.status === "needs_review") {
+      await db.application.update({
+        where: { id: applicationId },
+        data: { status: "queued" },
+      });
+
+      await db.applicationStep.create({
+        data: {
+          applicationId,
+          name: "AUTO_SUBMIT_POLICY",
+          state: "auto_queued",
+        },
+      });
+
+      await enqueueJob({
+        type: "EASY_APPLY_SUBMIT",
+        runId: `run-${Date.now()}`,
+        priority: 0,
+        accountId: application.accountId,
+        applicationId,
+        jobPostingId: applicationFresh.jobPostingId,
+        payload: { applicationId },
+      });
+    }
+  }
+
+  return { answer: row, readiness };
 });
 
 app.post("/applications/:id/deny", async (req) => {
@@ -156,28 +227,9 @@ app.post("/applications/:id/approve", async (req, reply) => {
   const application = await db.application.findUnique({ where: { id } });
   if (!application) return reply.code(404).send({ error: "not_found" });
 
-  // Gate approval: all required questions must be approved.
-  const dryRunStep = await db.applicationStep.findFirst({
-    where: { applicationId: id, name: "EASY_APPLY_DRY_RUN" },
-    orderBy: { createdAt: "desc" },
-  });
-  const questions = ((dryRunStep?.detail as any)?.questions as any[]) ?? [];
-  const requiredLabels = new Set<string>(
-    questions
-      .filter((q) => Boolean(q?.required) && typeof q?.label === "string")
-      .map((q) => String(q.label))
-  );
-  if (requiredLabels.size > 0) {
-    const answers = await db.applicationAnswer.findMany({ where: { applicationId: id } });
-    const approvedLabels = new Set(
-      answers
-        .filter((a) => a.approved && a.answer !== "NEEDS_HUMAN_INPUT")
-        .map((a) => a.questionLabel)
-    );
-    const missing = [...requiredLabels].filter((l) => !approvedLabels.has(l));
-    if (missing.length > 0) {
-      return reply.code(409).send({ error: "not_ready", missingRequired: missing.slice(0, 20) });
-    }
+  const readiness = await computeSubmitReadiness({ db, applicationId: id });
+  if (!readiness.ready) {
+    return reply.code(409).send({ error: "not_ready", missingRequired: readiness.missingRequired });
   }
 
   await db.application.update({

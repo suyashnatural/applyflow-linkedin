@@ -209,6 +209,7 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
                   const approved = formData.get("approved") === "on";
                   const required = formData.get("required") === "on";
                   const requiresApproval = formData.get("requiresApproval") === "on";
+                  const saveAsTemplate = formData.get("saveAsTemplate") === "on";
                   const confidence = Number(formData.get("confidence") ?? 0);
                   await postJson(`/applications/${application.id}/answers/upsert`, {
                     questionId,
@@ -218,6 +219,7 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
                     required,
                     requiresApproval,
                     confidence,
+                    saveAsTemplate,
                   });
                 }}
               >
@@ -256,6 +258,10 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
                   <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
                     <input type="checkbox" name="required" defaultChecked={a.required} />
                     Required
+                  </label>
+                  <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
+                    <input type="checkbox" name="saveAsTemplate" defaultChecked={false} />
+                    Save as template
                   </label>
                   <button style={{ padding: "6px 10px" }}>Save</button>
                 </div>

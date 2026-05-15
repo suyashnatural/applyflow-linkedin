@@ -3,7 +3,7 @@ import { logger } from "@applyflow/observability";
 import { completeJob, leaseNextJob, rescheduleJob } from "@applyflow/queue";
 import { getDb } from "@applyflow/db";
 import { draftAnswers, loadCandidateProfile } from "@applyflow/ai";
-import { ApplyFlowError, asFailure } from "@applyflow/shared";
+import { ApplyFlowError, asFailure, fingerprintQuestionLabel } from "@applyflow/shared";
 import {
   discoverLinkedInJobs,
   easyApplyDryRun,
@@ -450,17 +450,67 @@ for (;;) {
       const profile = loadCandidateProfile(candidateProfilePath);
       const result = await draftAnswers({ profile, questions });
 
-      // Upsert drafts into application_answers (not approved by default).
+      const fingerprints = [
+        ...new Set(
+          questions.map((q) => fingerprintQuestionLabel(q.label)).filter((f) => f.length > 0)
+        ),
+      ];
+      const templates =
+        fingerprints.length > 0
+          ? await db.answerTemplate.findMany({
+              where: {
+                fingerprint: { in: fingerprints },
+                OR: [{ accountId: dbApplication.accountId }, { accountId: null }],
+                approved: true,
+              },
+            })
+          : [];
+
+      const templateByFingerprint = new Map<
+        string,
+        { answer: string; accountId: string | null; fingerprint: string }
+      >();
+      // Prefer account-scoped templates over global templates.
+      for (const t of templates) {
+        const existing = templateByFingerprint.get(t.fingerprint);
+        if (!existing) {
+          templateByFingerprint.set(t.fingerprint, {
+            answer: t.answer,
+            accountId: t.accountId ?? null,
+            fingerprint: t.fingerprint,
+          });
+          continue;
+        }
+        if (existing.accountId === null && t.accountId === dbApplication.accountId) {
+          templateByFingerprint.set(t.fingerprint, {
+            answer: t.answer,
+            accountId: t.accountId ?? null,
+            fingerprint: t.fingerprint,
+          });
+        }
+      }
+
+      // Upsert drafts into application_answers (auto-approve when template matches).
       for (const q of questions) {
         const draft = result.answers.find((a) => a.questionId === q.id);
-        if (!draft) continue;
         const existing = await db.applicationAnswer.findUnique({
           where: { applicationId_questionId: { applicationId, questionId: q.id } },
         });
+
+        // Don't overwrite human-edited answers.
+        if (existing?.source === "manual") continue;
+
+        const fingerprint = fingerprintQuestionLabel(q.label);
+        const template = templateByFingerprint.get(fingerprint);
+
+        const answerText = template?.answer ?? draft?.answer;
+        if (!answerText) continue;
+
         const keepApproved =
           Boolean(existing?.approved) &&
           typeof existing?.answer === "string" &&
-          existing.answer === draft.answer;
+          existing.answer === answerText;
+
         await db.applicationAnswer.upsert({
           where: { applicationId_questionId: { applicationId, questionId: q.id } },
           create: {
@@ -468,20 +518,20 @@ for (;;) {
             questionId: q.id,
             questionLabel: q.label,
             required: q.required,
-            answer: draft.answer,
-            confidence: draft.confidence,
-            requiresApproval: draft.requiresApproval,
-            approved: false,
-            source: "draft",
+            answer: answerText,
+            confidence: template ? 1 : (draft?.confidence ?? 0),
+            requiresApproval: template ? false : (draft?.requiresApproval ?? true),
+            approved: Boolean(template) || keepApproved,
+            source: template ? "template" : "draft",
           },
           update: {
             questionLabel: q.label,
             required: q.required,
-            answer: draft.answer,
-            confidence: draft.confidence,
-            requiresApproval: draft.requiresApproval,
-            approved: keepApproved,
-            source: "draft",
+            answer: answerText,
+            confidence: template ? 1 : (draft?.confidence ?? 0),
+            requiresApproval: template ? false : (draft?.requiresApproval ?? true),
+            approved: Boolean(template) || keepApproved,
+            source: template ? "template" : "draft",
           },
         });
       }

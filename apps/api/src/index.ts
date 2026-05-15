@@ -2,8 +2,10 @@ import { getConfig } from "@applyflow/config";
 import { getDb } from "@applyflow/db";
 import { logger } from "@applyflow/observability";
 import { enqueueJob } from "@applyflow/queue";
+import { fingerprintQuestionLabel } from "@applyflow/shared";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import type { Prisma } from "@prisma/client";
 
 const config = getConfig();
 logger.info({ env: config.nodeEnv }, "api boot");
@@ -71,6 +73,7 @@ app.post("/applications/:id/answers/upsert", async (req, reply) => {
   const approved = Boolean(body.approved);
   const requiresApproval = Boolean(body.requiresApproval);
   const confidence = typeof body.confidence === "number" ? body.confidence : 0;
+  const saveAsTemplate = Boolean(body.saveAsTemplate);
 
   if (!questionId || !questionLabel || !answer) {
     return reply.code(400).send({ error: "missing_fields" });
@@ -80,28 +83,49 @@ app.post("/applications/:id/answers/upsert", async (req, reply) => {
   const application = await db.application.findUnique({ where: { id: applicationId } });
   if (!application) return reply.code(404).send({ error: "not_found" });
 
-  const row = await db.applicationAnswer.upsert({
-    where: { applicationId_questionId: { applicationId, questionId } },
-    create: {
-      applicationId,
-      questionId,
-      questionLabel,
-      required,
-      answer,
-      confidence,
-      requiresApproval,
-      approved,
-      source: "manual",
-    },
-    update: {
-      questionLabel,
-      required,
-      answer,
-      confidence,
-      requiresApproval,
-      approved,
-      source: "manual",
-    },
+  const row = await db.$transaction(async (tx: Prisma.TransactionClient) => {
+    const answerRow = await tx.applicationAnswer.upsert({
+      where: { applicationId_questionId: { applicationId, questionId } },
+      create: {
+        applicationId,
+        questionId,
+        questionLabel,
+        required,
+        answer,
+        confidence,
+        requiresApproval,
+        approved,
+        source: "manual",
+      },
+      update: {
+        questionLabel,
+        required,
+        answer,
+        confidence,
+        requiresApproval,
+        approved,
+        source: "manual",
+      },
+    });
+
+    if (saveAsTemplate) {
+      const fingerprint = fingerprintQuestionLabel(questionLabel);
+      await tx.answerTemplate.upsert({
+        where: { accountId_fingerprint: { accountId: application.accountId, fingerprint } },
+        create: {
+          accountId: application.accountId,
+          fingerprint,
+          answer,
+          approved,
+        },
+        update: {
+          answer,
+          approved,
+        },
+      });
+    }
+
+    return answerRow;
   });
 
   return { answer: row };

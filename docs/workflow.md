@@ -50,3 +50,8 @@
 - Create `.local/candidate-profile.json` based on `.local/candidate-profile.example.json`.
 - Set `OPENAI_API_KEY` and `CANDIDATE_PROFILE_PATH` in `.env`.
 - Enqueue AI drafting by running API with `RUN_AI_DRAFT_DEMO=1` and `APPLICATION_ID=<id>`.
+
+## Submit Policy
+
+- Automation stops and marks `needs_review` when required inputs are missing or answers are not confidently auto-fillable.
+- No in-modal waiting/resume in MVP; re-run after human fixes or improved profile/answers.

@@ -8,6 +8,7 @@ import {
   easyApplyDryRun,
   ensureLinkedInSession,
   fetchLinkedInJobDetail,
+  submitEasyApply,
 } from "@applyflow/linkedin-automation";
 
 const config = getConfig();
@@ -253,8 +254,101 @@ for (;;) {
         throw new Error(result.error);
       }
     } else if (job.type === "EASY_APPLY_SUBMIT") {
-      // Stub: submission flow lands in a later PR.
-      throw new Error("EASY_APPLY_SUBMIT not implemented yet");
+      const applicationId = job.applicationId ?? (job.payload as any)?.applicationId;
+      if (!applicationId || typeof applicationId !== "string") {
+        throw new Error("EASY_APPLY_SUBMIT requires applicationId");
+      }
+
+      const application = await db.application.findUnique({
+        where: { id: applicationId },
+        include: {
+          jobPosting: true,
+          steps: { orderBy: { createdAt: "desc" } },
+        },
+      });
+      if (!application) throw new Error("application not found");
+
+      const dryRunStep = application.steps.find((s) => s.name === "EASY_APPLY_DRY_RUN");
+      const questionsRaw = (dryRunStep?.detail as any)?.questions as any[] | undefined;
+      const questionIdToLabel = new Map<string, string>();
+      if (Array.isArray(questionsRaw)) {
+        for (const q of questionsRaw) {
+          if (typeof q?.id === "string" && typeof q?.label === "string") {
+            questionIdToLabel.set(q.id, q.label);
+          }
+        }
+      }
+
+      const aiStep = application.steps.find((s) => s.name === "AI_DRAFT_ANSWERS");
+      if (!aiStep?.detail) {
+        throw new Error("missing AI_DRAFT_ANSWERS (cannot submit without drafts)");
+      }
+
+      const answers = (aiStep.detail as any)?.answers as any[] | undefined;
+      if (!Array.isArray(answers)) throw new Error("invalid AI_DRAFT_ANSWERS detail");
+
+      const submitAnswers = answers
+        .filter((a) => typeof a?.answer === "string" && typeof a?.questionId === "string")
+        .map((a) => ({
+          questionLabel: questionIdToLabel.get(String(a.questionId)) ?? String(a.questionId),
+          answer: String(a.answer),
+          requiresApproval: Boolean(a.requiresApproval),
+        }));
+
+      const headful = process.env.HEADFUL ? process.env.HEADFUL === "1" : true;
+      const artifactDir =
+        process.env.ARTIFACT_DIR ??
+        `.local/artifacts/${application.accountId}/${application.id}/${Date.now().toString()}`;
+
+      await db.applicationStep.create({
+        data: { applicationId, name: "EASY_APPLY_SUBMIT", state: "started" },
+      });
+
+      const result = await submitEasyApply({
+        accountId: application.accountId,
+        headful,
+        jobUrl: application.jobPosting.url,
+        answers: submitAnswers,
+        artifactDir,
+        maxSteps: 30,
+      });
+
+      await db.applicationStep.create({
+        data: {
+          applicationId,
+          name: "EASY_APPLY_SUBMIT",
+          state: result.kind === "submitted" ? "succeeded" : "failed",
+          detail: result as any,
+        },
+      });
+
+      if (result.kind === "submitted") {
+        await db.application.update({
+          where: { id: applicationId },
+          data: { status: "submitted" },
+        });
+      } else if (result.kind === "needs_review") {
+        await db.application.update({
+          where: { id: applicationId },
+          data: { status: "needs_review" },
+        });
+      } else if (result.kind === "blocked") {
+        await db.application.update({ where: { id: applicationId }, data: { status: "blocked" } });
+        await db.event.create({
+          data: {
+            runId: job.runId,
+            type: "LINKEDIN_BLOCKED",
+            payload: { blockedReason: result.reason, url: result.url },
+            accountId: application.accountId,
+            jobPostingId: application.jobPostingId,
+            applicationId,
+          },
+        });
+        throw new Error(`linkedin blocked: ${result.reason}`);
+      } else {
+        await db.application.update({ where: { id: applicationId }, data: { status: "failed" } });
+        throw new Error(result.error);
+      }
     } else if (job.type === "AI_DRAFT_ANSWERS") {
       const applicationId = job.applicationId ?? (job.payload as any)?.applicationId;
       if (!applicationId || typeof applicationId !== "string") {

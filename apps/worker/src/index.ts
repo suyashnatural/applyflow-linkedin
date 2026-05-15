@@ -1,8 +1,9 @@
 import { getConfig } from "@applyflow/config";
 import { logger } from "@applyflow/observability";
-import { completeJob, leaseNextJob } from "@applyflow/queue";
+import { completeJob, leaseNextJob, rescheduleJob } from "@applyflow/queue";
 import { getDb } from "@applyflow/db";
 import { draftAnswers, loadCandidateProfile } from "@applyflow/ai";
+import { ApplyFlowError, asFailure } from "@applyflow/shared";
 import {
   discoverLinkedInJobs,
   easyApplyDryRun,
@@ -19,6 +20,13 @@ const pollMs = Number.parseInt(process.env.WORKER_POLL_MS ?? "1000", 10);
 const leaseMs = Number.parseInt(process.env.WORKER_LEASE_MS ?? "30000", 10);
 const candidateProfilePath = process.env.CANDIDATE_PROFILE_PATH;
 
+function computeBackoffMs(attempt: number): number {
+  // Exponential backoff with a cap (attempt is 1-based in our queue).
+  const base = 2000;
+  const ms = Math.min(60_000, base * Math.pow(2, Math.max(0, attempt - 1)));
+  return ms;
+}
+
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -33,9 +41,11 @@ for (;;) {
   const jobId = leased.jobId;
   logger.info({ jobId, leaseOwner }, "job leased");
 
+  let job: Awaited<ReturnType<ReturnType<typeof getDb>["queueJob"]["findUnique"]>> | null = null;
+
   try {
     const db = getDb();
-    const job = await db.queueJob.findUnique({ where: { id: jobId } });
+    job = await db.queueJob.findUnique({ where: { id: jobId } });
     if (!job) throw new Error(`queue job not found: ${jobId}`);
 
     if (job.type === "LINKEDIN_SESSION_BOOTSTRAP") {
@@ -151,7 +161,14 @@ for (;;) {
               jobPostingId: posting.id,
             },
           });
-          throw new Error(`linkedin blocked: ${detail.blockedReason}`);
+          throw new ApplyFlowError({
+            code:
+              detail.blockedReason === "login_required"
+                ? "blocked_login_required"
+                : "blocked_checkpoint",
+            message: `linkedin blocked: ${detail.blockedReason}`,
+            retryable: false,
+          });
         }
 
         await db.jobPosting.update({
@@ -261,7 +278,12 @@ for (;;) {
             applicationId: application.id,
           },
         });
-        throw new Error(`linkedin blocked: ${result.reason}`);
+        throw new ApplyFlowError({
+          code:
+            result.reason === "login_required" ? "blocked_login_required" : "blocked_checkpoint",
+          message: `linkedin blocked: ${result.reason}`,
+          retryable: false,
+        });
       }
       if (result.kind === "failed") {
         throw new Error(result.error);
@@ -370,7 +392,12 @@ for (;;) {
             applicationId,
           },
         });
-        throw new Error(`linkedin blocked: ${result.reason}`);
+        throw new ApplyFlowError({
+          code:
+            result.reason === "login_required" ? "blocked_login_required" : "blocked_checkpoint",
+          message: `linkedin blocked: ${result.reason}`,
+          retryable: false,
+        });
       } else {
         await db.application.update({ where: { id: applicationId }, data: { status: "failed" } });
         throw new Error(result.error);
@@ -424,8 +451,36 @@ for (;;) {
     await completeJob({ jobId, leaseOwner, ok: true });
     logger.info({ jobId }, "job succeeded");
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.error({ jobId, err: message }, "job failed");
-    await completeJob({ jobId, leaseOwner, ok: false, error: message });
+    const failure = asFailure(error);
+    logger.error({ jobId, failure }, "job failed");
+
+    // Retry only when allowed and attempts remaining.
+    if (
+      failure.retryable &&
+      job &&
+      typeof (job as any).attempts === "number" &&
+      typeof (job as any).maxAttempts === "number"
+    ) {
+      const attempts = (job as any).attempts as number;
+      const maxAttempts = (job as any).maxAttempts as number;
+      if (attempts < maxAttempts) {
+        const delay = computeBackoffMs(attempts);
+        await rescheduleJob({
+          jobId,
+          leaseOwner,
+          runAfter: new Date(Date.now() + delay),
+          error: `${failure.code}: ${failure.message}`,
+        });
+        logger.info({ jobId, delayMs: delay }, "job rescheduled");
+        continue;
+      }
+    }
+
+    await completeJob({
+      jobId,
+      leaseOwner,
+      ok: false,
+      error: `${failure.code}: ${failure.message}`,
+    });
   }
 }

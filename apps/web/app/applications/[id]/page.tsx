@@ -48,6 +48,11 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
   const { id } = await props.params;
   const application = await getApplication(id);
   const aiStep = application.steps.find((s) => s.name === "AI_DRAFT_ANSWERS");
+  const latestNonSuccess = [...application.steps].reverse().find((s) => s.state !== "succeeded");
+  const latestReason =
+    latestNonSuccess && latestNonSuccess.detail && typeof latestNonSuccess.detail === "object"
+      ? ((latestNonSuccess.detail as any).reason ?? (latestNonSuccess.detail as any).error ?? null)
+      : null;
 
   return (
     <main style={{ padding: 24, maxWidth: 960, margin: "0 auto" }}>
@@ -102,6 +107,24 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
           </form>
         </div>
       </section>
+
+      {latestNonSuccess ? (
+        <section
+          style={{
+            marginTop: 16,
+            border: "1px solid #eee",
+            borderRadius: 12,
+            padding: 12,
+            background: "#fafafa",
+          }}
+        >
+          <div style={{ fontWeight: 600 }}>Latest outcome</div>
+          <div style={{ fontSize: 12, color: "#555" }}>
+            {latestNonSuccess.name} · {latestNonSuccess.state}
+            {latestReason ? ` · ${String(latestReason)}` : ""}
+          </div>
+        </section>
+      ) : null}
 
       <h2 style={{ marginTop: 24 }}>Timeline</h2>
       {aiStep?.detail ? (

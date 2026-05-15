@@ -96,3 +96,30 @@ export async function completeJob(params: {
     },
   });
 }
+
+export async function rescheduleJob(params: {
+  jobId: string;
+  leaseOwner: string;
+  runAfter: Date;
+  error?: string;
+}): Promise<void> {
+  const db = getDb();
+  const job = await db.queueJob.findUnique({
+    where: { id: params.jobId },
+    select: { leaseOwner: true },
+  });
+  if (!job) throw new Error(`queue job not found: ${params.jobId}`);
+  if (job.leaseOwner !== params.leaseOwner) {
+    throw new Error(`lease owner mismatch for job ${params.jobId}`);
+  }
+
+  await db.queueJob.update({
+    where: { id: params.jobId },
+    data: {
+      status: QueueJobStatus.queued,
+      runAfter: params.runAfter,
+      error: params.error ?? null,
+      leasedUntil: null,
+    },
+  });
+}

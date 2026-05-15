@@ -9,3 +9,6 @@ export { fetchLinkedInJobDetail } from "./jobDetail.js";
 
 export type { EasyApplyDryRunResult } from "./easyApply.js";
 export { easyApplyDryRun } from "./easyApply.js";
+
+export type { EasyApplySubmitResult, SubmitAnswer } from "./easyApplySubmit.js";
+export { submitEasyApply } from "./easyApplySubmit.js";

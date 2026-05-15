@@ -47,6 +47,7 @@ async function postJson(path: string, body: unknown): Promise<void> {
 export default async function ApplicationPage(props: { params: Promise<{ id: string }> }) {
   const { id } = await props.params;
   const application = await getApplication(id);
+  const aiStep = application.steps.find((s) => s.name === "AI_DRAFT_ANSWERS");
 
   return (
     <main style={{ padding: 24, maxWidth: 960, margin: "0 auto" }}>
@@ -103,6 +104,22 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
       </section>
 
       <h2 style={{ marginTop: 24 }}>Timeline</h2>
+      {aiStep?.detail ? (
+        <>
+          <h3 style={{ marginTop: 16 }}>AI Draft Answers</h3>
+          <pre
+            style={{
+              marginTop: 8,
+              padding: 12,
+              borderRadius: 12,
+              background: "#fafafa",
+              overflow: "auto",
+            }}
+          >
+            {JSON.stringify(aiStep.detail, null, 2)}
+          </pre>
+        </>
+      ) : null}
       <div style={{ display: "grid", gap: 12 }}>
         {application.steps.map((s) => (
           <div key={s.id} style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}>

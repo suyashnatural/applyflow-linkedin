@@ -14,18 +14,26 @@
   ],
   "scripts": {
     "dev": "npm run dev -w @applyflow/web",
+    "dev:api": "npm run dev -w @applyflow/api",
+    "dev:web": "npm run dev -w @applyflow/web",
+    "dev:worker": "npm run dev -w @applyflow/worker",
+    "dev:all": "concurrently -n api,web,worker -c blue,green,magenta \"npm run dev:api\" \"npm run dev:web\" \"npm run dev:worker\"",
     "build": "npm run build --workspaces",
     "lint": "eslint .",
     "typecheck": "npm run typecheck --workspaces",
     "test": "npm run test --workspaces",
     "format": "prettier . --check",
-    "format:write": "prettier . --write"
+    "format:write": "prettier . --write",
+    "db:generate": "npm run db:generate -w @applyflow/db",
+    "db:migrate:dev": "npm run db:migrate:dev -w @applyflow/db",
+    "db:migrate:deploy": "npm run db:migrate:deploy -w @applyflow/db"
   },
   "devDependencies": {
     "@eslint/js": "^9.9.0",
     "@types/node": "^22.10.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
+    "concurrently": "^9.2.0",
     "eslint": "^9.9.0",
     "prettier": "^3.3.3",
     "typescript": "^5.6.3"

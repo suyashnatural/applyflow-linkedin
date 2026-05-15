@@ -9,12 +9,12 @@ This repo bootstraps a production-grade LinkedIn-only job search + Easy Apply au
 
 ## Local dev (bootstrap)
 
-1. Start Postgres: `docker compose up -d`
-2. Create `.env` from `.env.example`
+1. Start Postgres: `docker compose up -d` (or install Postgres locally)
+2. Create `.env` from `.env.example` and set `DATABASE_URL`
 3. Install dependencies: `npm i`
-4. Run API: `npm run dev -w @applyflow/api`
-5. Run Web: `npm run dev -w @applyflow/web`
-6. Run Worker: `npm run dev -w @applyflow/worker`
+4. Generate Prisma client: `npm run db:generate`
+5. Apply migrations: `npm run db:migrate:dev`
+6. Start everything: `npm run dev:all`
 
 ## Workflow
 

@@ -43,3 +43,10 @@ export const DraftAnswersResultSchema = z.object({
   warnings: z.array(z.string()).default([]),
 });
 export type DraftAnswersResult = z.infer<typeof DraftAnswersResultSchema>;
+
+export const JobScoreSchema = z.object({
+  score: z.number().int().min(0).max(100),
+  rationale: z.string().min(1),
+  warnings: z.array(z.string()).default([]),
+});
+export type JobScore = z.infer<typeof JobScoreSchema>;

@@ -34,6 +34,11 @@
 - Backfill incomplete rows by running API with `RUN_SYNC_DEMO=1`.
 - Configure `LINKEDIN_SYNC_MAX_JOBS`.
 
+## Job Scoring (Dev)
+
+- Score recent postings by running API with `RUN_SCORE_DEMO=1`.
+- Configure `SCORE_MAX_JOBS` and `SCORE_THRESHOLD`.
+
 ## Easy Apply Dry-Run (Dev)
 
 - Ensure session is logged in first (HEADFUL default is on).

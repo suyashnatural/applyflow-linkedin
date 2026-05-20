@@ -3,6 +3,12 @@ type ApplicationListItem = {
   status: string;
   createdAt: string;
   jobPostingId: string;
+  jobPosting?: {
+    id: string;
+    title: string | null;
+    companyName: string | null;
+    score: number | null;
+  };
 };
 
 async function getNeedsReview(): Promise<ApplicationListItem[]> {
@@ -47,6 +53,14 @@ export default async function Home() {
               <div>
                 <div style={{ fontWeight: 600 }}>{a.id}</div>
                 <div style={{ color: "#555", fontSize: 12 }}>jobPostingId: {a.jobPostingId}</div>
+                {a.jobPosting ? (
+                  <div style={{ color: "#555", fontSize: 12 }}>
+                    {a.jobPosting.title ?? "Untitled"} @ {a.jobPosting.companyName ?? "Unknown"}
+                    {typeof a.jobPosting.score === "number"
+                      ? ` · score: ${a.jobPosting.score}`
+                      : ""}
+                  </div>
+                ) : null}
               </div>
               <div style={{ textAlign: "right" }}>
                 <div style={{ fontSize: 12, color: "#555" }}>{a.status}</div>

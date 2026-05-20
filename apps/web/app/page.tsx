@@ -21,6 +21,7 @@ async function getNeedsReview(): Promise<ApplicationListItem[]> {
 
 export default async function Home() {
   const applications = await getNeedsReview();
+  const accountId = process.env.LINKEDIN_ACCOUNT_ID ?? "default";
 
   return (
     <main style={{ padding: 24, maxWidth: 960, margin: "0 auto" }}>
@@ -31,7 +32,10 @@ export default async function Home() {
 
       <div style={{ margin: "12px 0 18px" }}>
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <a href="/dashboard" style={{ color: "#2563eb", textDecoration: "none", fontSize: 14 }}>
+          <a
+            href={`/dashboard?accountId=${encodeURIComponent(accountId)}`}
+            style={{ color: "#2563eb", textDecoration: "none", fontSize: 14 }}
+          >
             Dashboard →
           </a>
           <a href="/templates" style={{ color: "#2563eb", textDecoration: "none", fontSize: 14 }}>

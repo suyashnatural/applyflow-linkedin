@@ -14,6 +14,16 @@ type AutoApplyStats = {
   };
 };
 
+type LinkedInAccount = { id: string; createdAt: string; updatedAt: string };
+
+async function getAccounts(): Promise<LinkedInAccount[]> {
+  const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
+  const res = await fetch(`${baseUrl}/accounts`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`failed to fetch accounts: ${res.status}`);
+  const json = (await res.json()) as { accounts: LinkedInAccount[] };
+  return json.accounts ?? [];
+}
+
 async function getStats(accountId: string): Promise<AutoApplyStats> {
   const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
   const res = await fetch(
@@ -26,8 +36,13 @@ async function getStats(accountId: string): Promise<AutoApplyStats> {
   return (await res.json()) as AutoApplyStats;
 }
 
-export default async function DashboardPage() {
-  const accountId = process.env.LINKEDIN_ACCOUNT_ID ?? "default";
+export default async function DashboardPage(props: {
+  searchParams: Promise<{ accountId?: string }>;
+}) {
+  const sp = await props.searchParams;
+  const accounts = await getAccounts();
+  const accountId =
+    sp.accountId ?? accounts.at(0)?.id ?? process.env.LINKEDIN_ACCOUNT_ID ?? "default";
   const stats = await getStats(accountId);
 
   return (
@@ -36,7 +51,24 @@ export default async function DashboardPage() {
         ← Back
       </a>
       <h1 style={{ marginBottom: 8 }}>Dashboard</h1>
-      <p style={{ marginTop: 0, color: "#555" }}>Account: {stats.accountId}</p>
+      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <div style={{ color: "#555", fontSize: 14 }}>Account:</div>
+        <form method="GET">
+          <select
+            name="accountId"
+            defaultValue={accountId}
+            style={{ padding: "6px 8px", borderRadius: 10, border: "1px solid #ddd" }}
+          >
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.id}
+              </option>
+            ))}
+            {accounts.length === 0 ? <option value={accountId}>{accountId}</option> : null}
+          </select>
+          <button style={{ marginLeft: 8, padding: "6px 10px" }}>Load</button>
+        </form>
+      </div>
 
       <section style={{ border: "1px solid #e5e5e5", borderRadius: 12, padding: 16 }}>
         <div style={{ fontWeight: 600 }}>Today</div>

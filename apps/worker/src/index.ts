@@ -3,6 +3,7 @@ import { logger } from "@applyflow/observability";
 import { completeJob, leaseNextJob, rescheduleJob } from "@applyflow/queue";
 import { getDb } from "@applyflow/db";
 import { draftAnswers, loadCandidateProfile } from "@applyflow/ai";
+import { scoreJobPosting } from "@applyflow/ai";
 import { ApplyFlowError, asFailure, fingerprintQuestionLabel } from "@applyflow/shared";
 import {
   discoverLinkedInJobs,
@@ -20,6 +21,10 @@ const leaseOwner = process.env.WORKER_ID ?? `worker-${process.pid}`;
 const pollMs = Number.parseInt(process.env.WORKER_POLL_MS ?? "1000", 10);
 const leaseMs = Number.parseInt(process.env.WORKER_LEASE_MS ?? "30000", 10);
 const candidateProfilePath = process.env.CANDIDATE_PROFILE_PATH;
+const scoreThresholdRaw = Number.parseInt(process.env.SCORE_THRESHOLD ?? "70", 10);
+const scoreThreshold = Number.isFinite(scoreThresholdRaw)
+  ? Math.max(0, Math.min(100, scoreThresholdRaw))
+  : 70;
 const accountCooldownMsRaw = Number.parseInt(process.env.ACCOUNT_COOLDOWN_MS ?? "20000", 10);
 const accountCooldownMs = Number.isFinite(accountCooldownMsRaw)
   ? Math.max(0, accountCooldownMsRaw)
@@ -292,6 +297,47 @@ for (;;) {
           },
         });
       }
+    } else if (job.type === "SCORE_JOB_POSTING") {
+      const jobPostingId = job.jobPostingId ?? (job.payload as any)?.jobPostingId;
+      if (!jobPostingId || typeof jobPostingId !== "string") {
+        throw new Error("SCORE_JOB_POSTING requires jobPostingId");
+      }
+      if (!candidateProfilePath) {
+        throw new Error("CANDIDATE_PROFILE_PATH is required for SCORE_JOB_POSTING");
+      }
+
+      const posting = await db.jobPosting.findUnique({ where: { id: jobPostingId } });
+      if (!posting) throw new Error("job posting not found");
+
+      const profile = loadCandidateProfile(candidateProfilePath);
+      const scored = await scoreJobPosting({
+        profile,
+        job: {
+          title: posting.title,
+          companyName: posting.companyName,
+          location: posting.location,
+          description: posting.description,
+        },
+      });
+
+      await db.jobPosting.update({
+        where: { id: posting.id },
+        data: {
+          score: scored.score,
+          scoreReason: scored.rationale,
+          scoredAt: new Date(),
+        },
+      });
+
+      await db.event.create({
+        data: {
+          runId: job.runId,
+          type: "JOB_SCORED",
+          payload: { score: scored.score, rationale: scored.rationale, warnings: scored.warnings },
+          accountId: posting.accountId,
+          jobPostingId: posting.id,
+        },
+      });
     } else if (job.type === "EASY_APPLY_ATTEMPT") {
       const accountId = job.accountId ?? (job.payload as any)?.accountId;
       if (!accountId || typeof accountId !== "string") {
@@ -309,11 +355,18 @@ for (;;) {
         typeof jobPostingId === "string"
           ? await db.jobPosting.findUnique({ where: { id: jobPostingId } })
           : await db.jobPosting.findFirst({
-              where: { accountId, easyApply: true },
+              where: { accountId, easyApply: true, score: { gte: scoreThreshold } },
               orderBy: { discoveredAt: "desc" },
             });
 
       if (!posting) throw new Error("no eligible JobPosting found for EASY_APPLY_ATTEMPT");
+      if (typeof posting.score === "number" && posting.score < scoreThreshold) {
+        throw new ApplyFlowError({
+          code: "unknown",
+          message: `job score ${posting.score} below threshold ${scoreThreshold}; not applying`,
+          retryable: false,
+        });
+      }
 
       const application = await db.application.create({
         data: {

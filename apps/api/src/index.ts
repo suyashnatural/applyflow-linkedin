@@ -33,6 +33,9 @@ app.get("/applications", async (req) => {
   const args: Parameters<typeof db.application.findMany>[0] = {
     orderBy: { createdAt: "desc" },
     take: 100,
+    include: {
+      jobPosting: { select: { id: true, title: true, companyName: true, score: true } },
+    },
   };
   if (status) args.where = { status };
   const applications = await db.application.findMany(args);
@@ -441,6 +444,29 @@ if (process.env.RUN_AI_DRAFT_DEMO === "1") {
     payload: { applicationId },
   });
   logger.info({ jobId }, "enqueued ai draft answers job");
+}
+
+if (process.env.RUN_SCORE_DEMO === "1") {
+  const accountId = process.env.LINKEDIN_ACCOUNT_ID;
+  if (!accountId) throw new Error("LINKEDIN_ACCOUNT_ID is required for RUN_SCORE_DEMO");
+
+  const candidates = await getDb().jobPosting.findMany({
+    where: { accountId, description: { not: null }, score: null },
+    orderBy: { discoveredAt: "desc" },
+    take: process.env.SCORE_MAX_JOBS ? Number.parseInt(process.env.SCORE_MAX_JOBS, 10) : 10,
+  });
+
+  for (const posting of candidates) {
+    const jobId = await enqueueJob({
+      type: "SCORE_JOB_POSTING",
+      runId: `run-${Date.now()}`,
+      priority: 0,
+      accountId,
+      jobPostingId: posting.id,
+      payload: { jobPostingId: posting.id },
+    });
+    logger.info({ jobId, jobPostingId: posting.id }, "enqueued score job posting");
+  }
 }
 
 const port = Number.parseInt(process.env.PORT ?? "3001", 10);

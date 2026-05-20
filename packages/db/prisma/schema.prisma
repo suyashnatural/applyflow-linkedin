@@ -33,6 +33,10 @@ model JobPosting {
   discoveredAt   DateTime @default(now())
   lastSeenAt     DateTime @default(now())
 
+  score          Int?
+  scoreReason    String?
+  scoredAt       DateTime?
+
   accountId      String
   account        LinkedInAccount @relation(fields: [accountId], references: [id])
 
@@ -41,6 +45,7 @@ model JobPosting {
 
   @@unique([accountId, linkedInJobId])
   @@index([accountId, discoveredAt])
+  @@index([accountId, score])
   @@map("job_postings")
 }
 

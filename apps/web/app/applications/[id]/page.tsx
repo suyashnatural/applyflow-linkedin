@@ -5,6 +5,8 @@ type JobPosting = {
   companyName: string | null;
   location: string | null;
   easyApply: boolean;
+  score?: number | null;
+  scoreReason?: string | null;
 };
 
 type ApplicationStep = {
@@ -116,6 +118,9 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
               </a>
               {" · "}
               {application.jobPosting.easyApply ? "Easy Apply" : "Not Easy Apply"}
+              {typeof application.jobPosting.score === "number"
+                ? ` · score: ${application.jobPosting.score}`
+                : ""}
             </div>
           </div>
           <div style={{ textAlign: "right" }}>

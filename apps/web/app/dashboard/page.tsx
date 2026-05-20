@@ -16,9 +16,14 @@ type AutoApplyStats = {
 
 type LinkedInAccount = { id: string; createdAt: string; updatedAt: string };
 
+function apiAuthHeaders(): Record<string, string> {
+  const key = process.env.WEB_API_KEY;
+  return key ? { "x-applyflow-api-key": key } : {};
+}
+
 async function getAccounts(): Promise<LinkedInAccount[]> {
   const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
-  const res = await fetch(`${baseUrl}/accounts`, { cache: "no-store" });
+  const res = await fetch(`${baseUrl}/accounts`, { cache: "no-store", headers: apiAuthHeaders() });
   if (!res.ok) throw new Error(`failed to fetch accounts: ${res.status}`);
   const json = (await res.json()) as { accounts: LinkedInAccount[] };
   return json.accounts ?? [];
@@ -30,6 +35,7 @@ async function getStats(accountId: string): Promise<AutoApplyStats> {
     `${baseUrl}/stats/auto-apply?accountId=${encodeURIComponent(accountId)}`,
     {
       cache: "no-store",
+      headers: apiAuthHeaders(),
     }
   );
   if (!res.ok) throw new Error(`failed to fetch stats: ${res.status}`);

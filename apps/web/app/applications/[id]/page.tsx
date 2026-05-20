@@ -46,9 +46,17 @@ type Application = {
   steps: ApplicationStep[];
 };
 
+function apiAuthHeaders(): Record<string, string> {
+  const key = process.env.WEB_API_KEY;
+  return key ? { "x-applyflow-api-key": key } : {};
+}
+
 async function getApplication(id: string): Promise<Application> {
   const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
-  const res = await fetch(`${baseUrl}/applications/${id}`, { cache: "no-store" });
+  const res = await fetch(`${baseUrl}/applications/${id}`, {
+    cache: "no-store",
+    headers: apiAuthHeaders(),
+  });
   if (!res.ok) throw new Error(`failed to fetch application: ${res.status}`);
   const json = (await res.json()) as { application: Application };
   return json.application;
@@ -56,7 +64,10 @@ async function getApplication(id: string): Promise<Application> {
 
 async function getAnswers(id: string): Promise<ApplicationAnswer[]> {
   const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
-  const res = await fetch(`${baseUrl}/applications/${id}/answers`, { cache: "no-store" });
+  const res = await fetch(`${baseUrl}/applications/${id}/answers`, {
+    cache: "no-store",
+    headers: apiAuthHeaders(),
+  });
   if (!res.ok) throw new Error(`failed to fetch answers: ${res.status}`);
   const json = (await res.json()) as { answers: ApplicationAnswer[] };
   return json.answers ?? [];
@@ -64,7 +75,10 @@ async function getAnswers(id: string): Promise<ApplicationAnswer[]> {
 
 async function getReadiness(id: string): Promise<SubmitReadiness> {
   const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
-  const res = await fetch(`${baseUrl}/applications/${id}/readiness`, { cache: "no-store" });
+  const res = await fetch(`${baseUrl}/applications/${id}/readiness`, {
+    cache: "no-store",
+    headers: apiAuthHeaders(),
+  });
   if (!res.ok) throw new Error(`failed to fetch readiness: ${res.status}`);
   const json = (await res.json()) as { readiness: SubmitReadiness };
   return json.readiness;
@@ -74,7 +88,7 @@ async function postJson(path: string, body: unknown): Promise<void> {
   const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
   const res = await fetch(`${baseUrl}${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...apiAuthHeaders() },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`request failed: ${res.status}`);

@@ -13,6 +13,26 @@ logger.info({ env: config.nodeEnv }, "api boot");
 const app = Fastify({ logger: false });
 await app.register(cors, { origin: true });
 
+const apiKey = process.env.API_KEY;
+const apiKeyHeader = "x-applyflow-api-key";
+
+app.addHook("preHandler", async (req, reply) => {
+  // Health endpoints stay unauthenticated for liveness checks.
+  if (req.url === "/healthz" || req.url.startsWith("/healthz/")) return;
+
+  // If API_KEY is not set, run open (dev mode). Set API_KEY in any shared env.
+  if (!apiKey) return;
+
+  const provided = req.headers[apiKeyHeader] ?? req.headers[apiKeyHeader.toLowerCase()];
+  const key = Array.isArray(provided) ? provided[0] : provided;
+  if (typeof key !== "string" || key.length === 0) {
+    return reply.code(401).send({ error: "missing_api_key" });
+  }
+  if (key !== apiKey) {
+    return reply.code(403).send({ error: "invalid_api_key" });
+  }
+});
+
 app.get("/healthz", async () => ({ ok: true }));
 
 app.get("/accounts", async () => {

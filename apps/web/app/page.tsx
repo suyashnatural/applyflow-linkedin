@@ -11,9 +11,17 @@ type ApplicationListItem = {
   };
 };
 
+function apiAuthHeaders(): Record<string, string> {
+  const key = process.env.WEB_API_KEY;
+  return key ? { "x-applyflow-api-key": key } : {};
+}
+
 async function getNeedsReview(): Promise<ApplicationListItem[]> {
   const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
-  const res = await fetch(`${baseUrl}/applications?status=needs_review`, { cache: "no-store" });
+  const res = await fetch(`${baseUrl}/applications?status=needs_review`, {
+    cache: "no-store",
+    headers: apiAuthHeaders(),
+  });
   if (!res.ok) throw new Error(`failed to fetch applications: ${res.status}`);
   const json = (await res.json()) as { applications: ApplicationListItem[] };
   return json.applications ?? [];

@@ -130,6 +130,15 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
           <form
             action={async () => {
               "use server";
+              await postJson(`/applications/${application.id}/answers/bulk-approve`, {});
+            }}
+          >
+            <button style={{ padding: "8px 12px" }}>Bulk approve safe answers</button>
+          </form>
+
+          <form
+            action={async () => {
+              "use server";
               if (!canSubmit) return;
               await postJson(`/applications/${application.id}/approve`, {});
             }}

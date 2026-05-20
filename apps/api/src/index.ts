@@ -2,7 +2,7 @@ import { getConfig } from "@applyflow/config";
 import { getDb } from "@applyflow/db";
 import { logger } from "@applyflow/observability";
 import { enqueueJob } from "@applyflow/queue";
-import { fingerprintQuestionLabel } from "@applyflow/shared";
+import { fingerprintQuestionLabel, isSensitiveQuestionLabel } from "@applyflow/shared";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import type { Prisma } from "@prisma/client";
@@ -92,6 +92,78 @@ app.get("/applications/:id/answers", async (req, reply) => {
     orderBy: { questionLabel: "asc" },
   });
   return { answers };
+});
+
+app.post("/applications/:id/answers/bulk-approve", async (req, reply) => {
+  const applicationId = (req.params as any).id as string;
+  const db = getDb();
+  const application = await db.application.findUnique({ where: { id: applicationId } });
+  if (!application) return reply.code(404).send({ error: "not_found" });
+
+  const answers = await db.applicationAnswer.findMany({ where: { applicationId } });
+  const candidates = answers.filter((a) => {
+    if (a.approved) return false;
+    if (a.answer === "NEEDS_HUMAN_INPUT") return false;
+    if (isSensitiveQuestionLabel(a.questionLabel)) return false;
+    return a.source === "template" || a.requiresApproval === false;
+  });
+
+  if (candidates.length > 0) {
+    await db.applicationAnswer.updateMany({
+      where: { id: { in: candidates.map((c) => c.id) } },
+      data: { approved: true },
+    });
+  }
+
+  await db.applicationStep.create({
+    data: {
+      applicationId,
+      name: "HUMAN_DECISION",
+      state: "bulk_approved",
+      detail: {
+        approvedCount: candidates.length,
+        skippedSensitiveCount: answers.filter((a) => isSensitiveQuestionLabel(a.questionLabel))
+          .length,
+      },
+    },
+  });
+
+  const readiness = await computeSubmitReadiness({ db, applicationId });
+
+  if (readiness.ready && process.env.AUTO_SUBMIT_ON_READY === "1") {
+    const applicationFresh = await db.application.findUnique({ where: { id: applicationId } });
+    if (applicationFresh && applicationFresh.status === "needs_review") {
+      await db.application.update({
+        where: { id: applicationId },
+        data: { status: "queued" },
+      });
+
+      await db.applicationStep.create({
+        data: {
+          applicationId,
+          name: "AUTO_SUBMIT_POLICY",
+          state: "auto_queued",
+        },
+      });
+
+      await enqueueJob({
+        type: "EASY_APPLY_SUBMIT",
+        runId: `run-${Date.now()}`,
+        priority: 0,
+        accountId: application.accountId,
+        applicationId,
+        jobPostingId: applicationFresh.jobPostingId,
+        payload: { applicationId },
+      });
+    }
+  }
+
+  const updatedAnswers = await db.applicationAnswer.findMany({
+    where: { applicationId },
+    orderBy: { questionLabel: "asc" },
+  });
+
+  return { approvedCount: candidates.length, readiness, answers: updatedAnswers };
 });
 
 app.get("/applications/:id/readiness", async (req, reply) => {

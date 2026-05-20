@@ -450,6 +450,17 @@ for (;;) {
       const remaining = Math.max(0, dailyApplyLimit - appliedToday);
       const attemptBudget = Math.min(remaining, maxAttempts);
 
+      if (attemptBudget === 0) {
+        await db.event.create({
+          data: {
+            runId: job.runId,
+            type: "AUTO_APPLY_SKIPPED_DUE_TO_LIMIT",
+            payload: { appliedToday, dailyApplyLimit, maxAttempts, remaining },
+            accountId,
+          },
+        });
+      }
+
       const eligible =
         attemptBudget > 0
           ? await db.jobPosting.findMany({
@@ -477,6 +488,17 @@ for (;;) {
           payload: { accountId, jobPostingId: posting.id },
         });
         enqueuedAttempts += 1;
+      }
+
+      if (attemptBudget > 0 && eligible.length === 0) {
+        await db.event.create({
+          data: {
+            runId: job.runId,
+            type: "AUTO_APPLY_NO_ELIGIBLE",
+            payload: { minScore, attemptBudget },
+            accountId,
+          },
+        });
       }
 
       await db.event.create({

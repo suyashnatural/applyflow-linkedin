@@ -27,6 +27,96 @@ app.get("/healthz/db", async (_req, reply) => {
   }
 });
 
+app.get("/events", async (req) => {
+  const accountId = (req.query as any)?.accountId as string | undefined;
+  const type = (req.query as any)?.type as string | undefined;
+  const limitRaw = (req.query as any)?.limit as string | number | undefined;
+  const limit =
+    typeof limitRaw === "number"
+      ? Math.floor(limitRaw)
+      : typeof limitRaw === "string"
+        ? Number.parseInt(limitRaw, 10)
+        : 50;
+  const take = Number.isFinite(limit) ? Math.max(1, Math.min(200, limit)) : 50;
+
+  const db = getDb();
+  const where: Prisma.EventWhereInput = {};
+  if (typeof accountId === "string" && accountId.trim().length > 0)
+    where.accountId = accountId.trim();
+  if (typeof type === "string" && type.trim().length > 0) where.type = type.trim();
+
+  const events = await db.event.findMany({
+    where,
+    orderBy: { time: "desc" },
+    take,
+  });
+  return { events };
+});
+
+app.get("/stats/auto-apply", async (req) => {
+  const accountId = (req.query as any)?.accountId as string | undefined;
+  if (!accountId || typeof accountId !== "string") {
+    return { error: "accountId_required" };
+  }
+
+  const limitRaw = (req.query as any)?.limit as string | number | undefined;
+  const limit =
+    typeof limitRaw === "number"
+      ? Math.floor(limitRaw)
+      : typeof limitRaw === "string"
+        ? Number.parseInt(limitRaw, 10)
+        : 25;
+  const take = Number.isFinite(limit) ? Math.max(1, Math.min(100, limit)) : 25;
+
+  const db = getDb();
+  const now = new Date();
+  const startOfDay = new Date(now);
+  startOfDay.setHours(0, 0, 0, 0);
+
+  const recentCycles = await db.event.findMany({
+    where: { accountId, type: "AUTO_APPLY_CYCLE" },
+    orderBy: { time: "desc" },
+    take,
+  });
+
+  let sumEnqueuedAttempts = 0;
+  let sumDiscovered = 0;
+  let sumSynced = 0;
+  let sumAttemptBudget = 0;
+  for (const e of recentCycles) {
+    const p = e.payload as any;
+    if (typeof p?.enqueuedAttempts === "number") sumEnqueuedAttempts += p.enqueuedAttempts;
+    if (typeof p?.discovered === "number") sumDiscovered += p.discovered;
+    if (typeof p?.synced === "number") sumSynced += p.synced;
+    if (typeof p?.attemptBudget === "number") sumAttemptBudget += p.attemptBudget;
+  }
+
+  const cyclesToday = await db.event.count({
+    where: { accountId, type: "AUTO_APPLY_CYCLE", time: { gte: startOfDay } },
+  });
+  const blockedToday = await db.event.count({
+    where: { accountId, type: "LINKEDIN_BLOCKED", time: { gte: startOfDay } },
+  });
+  const submittedToday = await db.application.count({
+    where: { accountId, status: "submitted", updatedAt: { gte: startOfDay } },
+  });
+  const needsReview = await db.application.count({ where: { accountId, status: "needs_review" } });
+
+  return {
+    accountId,
+    today: { cycles: cyclesToday, submitted: submittedToday, blocked: blockedToday, needsReview },
+    recent: {
+      cycles: recentCycles,
+      totals: {
+        discovered: sumDiscovered,
+        synced: sumSynced,
+        attemptBudget: sumAttemptBudget,
+        enqueuedAttempts: sumEnqueuedAttempts,
+      },
+    },
+  };
+});
+
 app.get("/applications", async (req) => {
   const status = (req.query as any)?.status as string | undefined;
   const db = getDb();

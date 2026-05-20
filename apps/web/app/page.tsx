@@ -23,6 +23,12 @@ export default async function Home() {
         Easy Apply dry-runs that reached the review step.
       </p>
 
+      <div style={{ margin: "12px 0 18px" }}>
+        <a href="/templates" style={{ color: "#2563eb", textDecoration: "none", fontSize: 14 }}>
+          Manage answer templates →
+        </a>
+      </div>
+
       <div style={{ display: "grid", gap: 12 }}>
         {applications.map((a) => (
           <a

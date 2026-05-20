@@ -104,6 +104,49 @@ app.get("/applications/:id/readiness", async (req, reply) => {
   return { readiness };
 });
 
+app.get("/templates", async (req) => {
+  const accountId = (req.query as any)?.accountId as string | undefined;
+  const db = getDb();
+  const where: Prisma.AnswerTemplateWhereInput = {};
+  if (typeof accountId === "string" && accountId.trim().length > 0) {
+    where.accountId = accountId.trim();
+  }
+  const templates = await db.answerTemplate.findMany({
+    where,
+    orderBy: { updatedAt: "desc" },
+    take: 200,
+  });
+  return { templates };
+});
+
+app.post("/templates/:id/update", async (req, reply) => {
+  const id = (req.params as any).id as string;
+  const body = (req.body as any) ?? {};
+  const answer = body.answer as string | undefined;
+  const approved = Boolean(body.approved);
+
+  if (!answer) return reply.code(400).send({ error: "missing_fields" });
+
+  const db = getDb();
+  const template = await db.answerTemplate.findUnique({ where: { id } });
+  if (!template) return reply.code(404).send({ error: "not_found" });
+
+  const updated = await db.answerTemplate.update({
+    where: { id },
+    data: { answer, approved },
+  });
+  return { template: updated };
+});
+
+app.post("/templates/:id/delete", async (req, reply) => {
+  const id = (req.params as any).id as string;
+  const db = getDb();
+  const template = await db.answerTemplate.findUnique({ where: { id } });
+  if (!template) return reply.code(404).send({ error: "not_found" });
+  await db.answerTemplate.delete({ where: { id } });
+  return { ok: true };
+});
+
 app.post("/applications/:id/answers/upsert", async (req, reply) => {
   const applicationId = (req.params as any).id as string;
   const body = (req.body as any) ?? {};

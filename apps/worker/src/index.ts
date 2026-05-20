@@ -1,9 +1,8 @@
 import { getConfig } from "@applyflow/config";
 import { logger } from "@applyflow/observability";
-import { completeJob, leaseNextJob, rescheduleJob } from "@applyflow/queue";
+import { completeJob, enqueueJob, leaseNextJob, rescheduleJob } from "@applyflow/queue";
 import { getDb } from "@applyflow/db";
-import { draftAnswers, loadCandidateProfile } from "@applyflow/ai";
-import { scoreJobPosting } from "@applyflow/ai";
+import { draftAnswers, loadCandidateProfile, scoreJobPosting } from "@applyflow/ai";
 import { ApplyFlowError, asFailure, fingerprintQuestionLabel } from "@applyflow/shared";
 import {
   discoverLinkedInJobs,
@@ -24,6 +23,14 @@ const candidateProfilePath = process.env.CANDIDATE_PROFILE_PATH;
 const scoreThresholdRaw = Number.parseInt(process.env.SCORE_THRESHOLD ?? "70", 10);
 const scoreThreshold = Number.isFinite(scoreThresholdRaw)
   ? Math.max(0, Math.min(100, scoreThresholdRaw))
+  : 70;
+const dailyApplyLimitRaw = Number.parseInt(process.env.DAILY_APPLY_LIMIT ?? "10", 10);
+const dailyApplyLimit = Number.isFinite(dailyApplyLimitRaw) ? Math.max(0, dailyApplyLimitRaw) : 10;
+const autoApplyTopNRaw = Number.parseInt(process.env.AUTO_APPLY_TOP_N ?? "5", 10);
+const autoApplyTopN = Number.isFinite(autoApplyTopNRaw) ? Math.max(0, autoApplyTopNRaw) : 5;
+const autoApplyMinScoreRaw = Number.parseInt(process.env.AUTO_APPLY_MIN_SCORE ?? "70", 10);
+const autoApplyMinScore = Number.isFinite(autoApplyMinScoreRaw)
+  ? Math.max(0, Math.min(100, autoApplyMinScoreRaw))
   : 70;
 const accountCooldownMsRaw = Number.parseInt(process.env.ACCOUNT_COOLDOWN_MS ?? "20000", 10);
 const accountCooldownMs = Number.isFinite(accountCooldownMsRaw)
@@ -60,6 +67,7 @@ function isLinkedInAutomationJobType(type: string): boolean {
     type === "LINKEDIN_SESSION_BOOTSTRAP" ||
     type === "DISCOVER_LINKEDIN_JOBS" ||
     type === "SYNC_JOB_DETAILS" ||
+    type === "RUN_AUTO_APPLY_CYCLE" ||
     type === "EASY_APPLY_ATTEMPT" ||
     type === "EASY_APPLY_SUBMIT"
   );
@@ -297,6 +305,195 @@ for (;;) {
           },
         });
       }
+    } else if (job.type === "RUN_AUTO_APPLY_CYCLE") {
+      const accountId = job.accountId ?? (job.payload as any)?.accountId;
+      if (!accountId || typeof accountId !== "string") {
+        throw new Error("RUN_AUTO_APPLY_CYCLE requires accountId");
+      }
+
+      const headful = process.env.HEADFUL ? process.env.HEADFUL === "1" : true;
+      const session = await ensureLinkedInSession({ accountId, headful });
+      if (session.kind !== "ok") {
+        throw new ApplyFlowError({
+          code: session.kind === "login_required" ? "blocked_login_required" : "blocked_checkpoint",
+          message: `session not ready (${session.kind})`,
+          retryable: false,
+        });
+      }
+
+      const maxAttemptsRaw = (job.payload as any)?.maxAttempts;
+      const maxAttempts =
+        typeof maxAttemptsRaw === "number" && Number.isFinite(maxAttemptsRaw)
+          ? Math.max(0, Math.floor(maxAttemptsRaw))
+          : autoApplyTopN;
+
+      const minScoreRaw = (job.payload as any)?.minScore;
+      const minScore =
+        typeof minScoreRaw === "number" && Number.isFinite(minScoreRaw)
+          ? Math.max(0, Math.min(100, Math.floor(minScoreRaw)))
+          : autoApplyMinScore;
+
+      // 1) Discover jobs
+      const keywords =
+        (job.payload as any)?.keywords ?? process.env.LINKEDIN_KEYWORDS ?? "software engineer";
+      const location = (job.payload as any)?.location ?? process.env.LINKEDIN_LOCATION;
+      const maxCardsRaw = (job.payload as any)?.maxCards;
+      const maxCards =
+        typeof maxCardsRaw === "number" && Number.isFinite(maxCardsRaw)
+          ? Math.max(1, Math.floor(maxCardsRaw))
+          : process.env.LINKEDIN_MAX_CARDS
+            ? Math.max(1, Number.parseInt(process.env.LINKEDIN_MAX_CARDS, 10))
+            : 25;
+
+      const discoverParams: Parameters<typeof discoverLinkedInJobs>[0] = {
+        accountId,
+        headful,
+        keywords,
+        maxCards,
+      };
+      if (typeof location === "string" && location.length > 0) discoverParams.location = location;
+
+      const cards = await discoverLinkedInJobs(discoverParams);
+      for (const card of cards) {
+        await db.jobPosting.upsert({
+          where: {
+            accountId_linkedInJobId: { accountId, linkedInJobId: card.linkedInJobId },
+          },
+          update: { url: card.url, lastSeenAt: new Date() },
+          create: {
+            accountId,
+            linkedInJobId: card.linkedInJobId,
+            url: card.url,
+            easyApply: false,
+          },
+        });
+      }
+
+      // 2) Sync details (best-effort for latest rows missing metadata)
+      const syncMaxRaw = (job.payload as any)?.syncMaxJobs;
+      const syncMax =
+        typeof syncMaxRaw === "number" && Number.isFinite(syncMaxRaw)
+          ? Math.max(0, Math.floor(syncMaxRaw))
+          : process.env.LINKEDIN_SYNC_MAX_JOBS
+            ? Math.max(0, Number.parseInt(process.env.LINKEDIN_SYNC_MAX_JOBS, 10))
+            : 10;
+
+      const candidates = await db.jobPosting.findMany({
+        where: {
+          accountId,
+          OR: [{ title: null }, { companyName: null }, { location: null }, { description: null }],
+        },
+        orderBy: { discoveredAt: "desc" },
+        take: syncMax,
+      });
+      for (const posting of candidates) {
+        const detail = await fetchLinkedInJobDetail({ accountId, headful, url: posting.url });
+        if (!detail.blockedReason) {
+          await db.jobPosting.update({
+            where: { id: posting.id },
+            data: {
+              url: detail.url,
+              title: detail.title ?? posting.title,
+              companyName: detail.companyName ?? posting.companyName,
+              location: detail.location ?? posting.location,
+              workplaceType: detail.workplaceType ?? posting.workplaceType,
+              description: detail.description ?? posting.description,
+              easyApply: detail.easyApply,
+              lastSeenAt: new Date(),
+            },
+          });
+        }
+      }
+
+      // 3) Score unscored jobs (requires candidate profile)
+      if (candidateProfilePath) {
+        const profile = loadCandidateProfile(candidateProfilePath);
+        const scoreMaxRaw = (job.payload as any)?.scoreMaxJobs;
+        const scoreMax =
+          typeof scoreMaxRaw === "number" && Number.isFinite(scoreMaxRaw)
+            ? Math.max(0, Math.floor(scoreMaxRaw))
+            : process.env.SCORE_MAX_JOBS
+              ? Math.max(0, Number.parseInt(process.env.SCORE_MAX_JOBS, 10))
+              : 10;
+
+        const toScore = await db.jobPosting.findMany({
+          where: { accountId, description: { not: null }, score: null },
+          orderBy: { discoveredAt: "desc" },
+          take: scoreMax,
+        });
+
+        for (const posting of toScore) {
+          const scored = await scoreJobPosting({
+            profile,
+            job: {
+              title: posting.title,
+              companyName: posting.companyName,
+              location: posting.location,
+              description: posting.description,
+            },
+          });
+          await db.jobPosting.update({
+            where: { id: posting.id },
+            data: { score: scored.score, scoreReason: scored.rationale, scoredAt: new Date() },
+          });
+        }
+      }
+
+      // 4) Enforce daily limit, then enqueue Easy Apply attempts for top scored jobs without existing applications
+      const now = new Date();
+      const startOfDay = new Date(now);
+      startOfDay.setHours(0, 0, 0, 0);
+      const appliedToday = await db.application.count({
+        where: { accountId, createdAt: { gte: startOfDay } },
+      });
+
+      const remaining = Math.max(0, dailyApplyLimit - appliedToday);
+      const attemptBudget = Math.min(remaining, maxAttempts);
+
+      const eligible =
+        attemptBudget > 0
+          ? await db.jobPosting.findMany({
+              where: { accountId, easyApply: true, score: { gte: minScore } },
+              orderBy: [{ score: "desc" }, { discoveredAt: "desc" }],
+              take: attemptBudget * 3,
+            })
+          : [];
+
+      let enqueuedAttempts = 0;
+      for (const posting of eligible) {
+        if (enqueuedAttempts >= attemptBudget) break;
+        const existing = await db.application.findFirst({
+          where: { accountId, jobPostingId: posting.id },
+          select: { id: true },
+        });
+        if (existing) continue;
+
+        await enqueueJob({
+          type: "EASY_APPLY_ATTEMPT",
+          runId: `run-${Date.now()}`,
+          priority: typeof posting.score === "number" ? posting.score : 0,
+          accountId,
+          jobPostingId: posting.id,
+          payload: { accountId, jobPostingId: posting.id },
+        });
+        enqueuedAttempts += 1;
+      }
+
+      await db.event.create({
+        data: {
+          runId: job.runId,
+          type: "AUTO_APPLY_CYCLE",
+          payload: {
+            discovered: cards.length,
+            synced: candidates.length,
+            appliedToday,
+            attemptBudget,
+            enqueuedAttempts,
+            minScore,
+          },
+          accountId,
+        },
+      });
     } else if (job.type === "SCORE_JOB_POSTING") {
       const jobPostingId = job.jobPostingId ?? (job.payload as any)?.jobPostingId;
       if (!jobPostingId || typeof jobPostingId !== "string") {

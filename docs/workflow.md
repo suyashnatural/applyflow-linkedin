@@ -39,6 +39,11 @@
 - Score recent postings by running API with `RUN_SCORE_DEMO=1`.
 - Configure `SCORE_MAX_JOBS` and `SCORE_THRESHOLD`.
 
+## Auto-Apply Cycle (Dev)
+
+- Run one orchestration cycle by running API with `RUN_AUTO_APPLY_DEMO=1` (or call `POST /auto-apply/run`).
+- Configure `AUTO_APPLY_TOP_N`, `AUTO_APPLY_MIN_SCORE`, and `DAILY_APPLY_LIMIT`.
+
 ## Easy Apply Dry-Run (Dev)
 
 - Ensure session is logged in first (HEADFUL default is on).

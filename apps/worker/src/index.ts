@@ -11,6 +11,7 @@ import {
   fetchLinkedInJobDetail,
   submitEasyApply,
 } from "@applyflow/linkedin-automation";
+import { QueueJobStatus } from "@prisma/client";
 
 const config = getConfig();
 logger.info({ env: config.nodeEnv }, "worker boot");
@@ -19,6 +20,18 @@ const leaseOwner = process.env.WORKER_ID ?? `worker-${process.pid}`;
 const pollMs = Number.parseInt(process.env.WORKER_POLL_MS ?? "1000", 10);
 const leaseMs = Number.parseInt(process.env.WORKER_LEASE_MS ?? "30000", 10);
 const candidateProfilePath = process.env.CANDIDATE_PROFILE_PATH;
+const accountCooldownMsRaw = Number.parseInt(process.env.ACCOUNT_COOLDOWN_MS ?? "20000", 10);
+const accountCooldownMs = Number.isFinite(accountCooldownMsRaw)
+  ? Math.max(0, accountCooldownMsRaw)
+  : 20_000;
+const jitterPctRaw = Number.parseFloat(process.env.ACCOUNT_JITTER_PCT ?? "0.2");
+const jitterPct = Number.isFinite(jitterPctRaw) ? Math.max(0, Math.min(1, jitterPctRaw)) : 0.2;
+const maxConcurrentRaw = Number.parseInt(process.env.MAX_CONCURRENT_PER_ACCOUNT ?? "1", 10);
+const maxConcurrentPerAccount = Number.isFinite(maxConcurrentRaw)
+  ? Math.max(0, maxConcurrentRaw)
+  : 1;
+
+const lastLinkedInActionAtByAccount = new Map<string, number>();
 
 function computeBackoffMs(attempt: number): number {
   // Exponential backoff with a cap (attempt is 1-based in our queue).
@@ -29,6 +42,85 @@ function computeBackoffMs(attempt: number): number {
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function jitterDelayMs(ms: number): number {
+  const pct = Number.isFinite(jitterPct) ? Math.max(0, Math.min(1, jitterPct)) : 0;
+  const rand = (Math.random() * 2 - 1) * pct; // [-pct, +pct]
+  return Math.max(0, Math.floor(ms * (1 + rand)));
+}
+
+function isLinkedInAutomationJobType(type: string): boolean {
+  return (
+    type === "LINKEDIN_SESSION_BOOTSTRAP" ||
+    type === "DISCOVER_LINKEDIN_JOBS" ||
+    type === "SYNC_JOB_DETAILS" ||
+    type === "EASY_APPLY_ATTEMPT" ||
+    type === "EASY_APPLY_SUBMIT"
+  );
+}
+
+async function enforceAccountSafetyRails(params: {
+  db: ReturnType<typeof getDb>;
+  jobId: string;
+  leaseOwner: string;
+  jobType: string;
+  accountId: string;
+}): Promise<"ok" | "rescheduled"> {
+  if (!isLinkedInAutomationJobType(params.jobType)) return "ok";
+
+  // Enforce per-account concurrency across workers by checking currently leased jobs.
+  if (maxConcurrentPerAccount > 0) {
+    const now = new Date();
+    const running = await params.db.queueJob.count({
+      where: {
+        id: { not: params.jobId },
+        accountId: params.accountId,
+        status: QueueJobStatus.running,
+        leasedUntil: { gt: now },
+      },
+    });
+
+    if (running >= maxConcurrentPerAccount) {
+      const delayMs = jitterDelayMs(Math.max(1000, accountCooldownMs));
+      await rescheduleJob({
+        jobId: params.jobId,
+        leaseOwner: params.leaseOwner,
+        runAfter: new Date(Date.now() + delayMs),
+        error: `throttled: account concurrency (${running})`,
+      });
+      logger.info(
+        { jobId: params.jobId, accountId: params.accountId, running, delayMs },
+        "throttled: per-account concurrency cap"
+      );
+      return "rescheduled";
+    }
+  }
+
+  // Enforce cooldown (best-effort per-worker).
+  if (accountCooldownMs > 0) {
+    const last = lastLinkedInActionAtByAccount.get(params.accountId);
+    if (typeof last === "number") {
+      const sinceMs = Date.now() - last;
+      if (sinceMs < accountCooldownMs) {
+        const delayMs = jitterDelayMs(accountCooldownMs - sinceMs);
+        await rescheduleJob({
+          jobId: params.jobId,
+          leaseOwner: params.leaseOwner,
+          runAfter: new Date(Date.now() + delayMs),
+          error: `throttled: cooldown (${sinceMs}ms since last)`,
+        });
+        logger.info(
+          { jobId: params.jobId, accountId: params.accountId, sinceMs, delayMs },
+          "throttled: per-account cooldown"
+        );
+        return "rescheduled";
+      }
+    }
+  }
+
+  lastLinkedInActionAtByAccount.set(params.accountId, Date.now());
+  return "ok";
 }
 
 for (;;) {
@@ -47,6 +139,21 @@ for (;;) {
     const db = getDb();
     job = await db.queueJob.findUnique({ where: { id: jobId } });
     if (!job) throw new Error(`queue job not found: ${jobId}`);
+
+    const accountIdForRails =
+      job.accountId ?? ((job.payload as any)?.accountId as string | undefined);
+    if (typeof accountIdForRails === "string" && accountIdForRails.length > 0) {
+      const railResult = await enforceAccountSafetyRails({
+        db,
+        jobId,
+        leaseOwner,
+        jobType: job.type,
+        accountId: accountIdForRails,
+      });
+      if (railResult === "rescheduled") {
+        continue;
+      }
+    }
 
     if (job.type === "LINKEDIN_SESSION_BOOTSTRAP") {
       const accountId = job.accountId ?? (job.payload as any)?.accountId;

@@ -60,3 +60,9 @@
 - Automation stops and marks `needs_review` when required inputs are missing or answers are not confidently auto-fillable.
 - No in-modal waiting/resume in MVP; re-run after human fixes or improved profile/answers.
 - Optional auto-submit: set `AUTO_SUBMIT_ON_READY=1` to auto-enqueue submit when an application becomes ready (e.g., after saving the last required approved answer or applying a template).
+
+## Worker Safety Rails
+
+- `MAX_CONCURRENT_PER_ACCOUNT` (default `1`): caps concurrently-running jobs per LinkedIn account across workers.
+- `ACCOUNT_COOLDOWN_MS` (default `20000`): best-effort cooldown between LinkedIn automation jobs per account (per worker).
+- `ACCOUNT_JITTER_PCT` (default `0.2`): randomizes cooldown delays by +/- this fraction to avoid bursty patterns.

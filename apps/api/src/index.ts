@@ -375,6 +375,35 @@ app.post("/applications/:id/approve", async (req, reply) => {
   return { ok: true, jobId };
 });
 
+app.post("/auto-apply/run", async (req) => {
+  const body = (req.body as any) ?? {};
+  const accountId = (body.accountId as string | undefined) ?? process.env.LINKEDIN_ACCOUNT_ID;
+  if (!accountId || typeof accountId !== "string") {
+    throw new Error("auto-apply requires accountId (or LINKEDIN_ACCOUNT_ID)");
+  }
+
+  const maxAttemptsRaw = body.maxAttempts as number | undefined;
+  const maxAttempts =
+    typeof maxAttemptsRaw === "number" && Number.isFinite(maxAttemptsRaw)
+      ? Math.max(0, Math.floor(maxAttemptsRaw))
+      : undefined;
+
+  const minScoreRaw = body.minScore as number | undefined;
+  const minScore =
+    typeof minScoreRaw === "number" && Number.isFinite(minScoreRaw)
+      ? Math.max(0, Math.min(100, Math.floor(minScoreRaw)))
+      : undefined;
+
+  const jobId = await enqueueJob({
+    type: "RUN_AUTO_APPLY_CYCLE",
+    runId: `run-${Date.now()}`,
+    priority: 0,
+    accountId,
+    payload: { accountId, maxAttempts, minScore },
+  });
+  return { ok: true, jobId };
+});
+
 if (process.env.RUN_ENQUEUE_DEMO === "1") {
   const jobId = await enqueueJob({
     type: "LINKEDIN_SESSION_BOOTSTRAP",
@@ -467,6 +496,27 @@ if (process.env.RUN_SCORE_DEMO === "1") {
     });
     logger.info({ jobId, jobPostingId: posting.id }, "enqueued score job posting");
   }
+}
+
+if (process.env.RUN_AUTO_APPLY_DEMO === "1") {
+  const accountId = process.env.LINKEDIN_ACCOUNT_ID;
+  if (!accountId) throw new Error("LINKEDIN_ACCOUNT_ID is required for RUN_AUTO_APPLY_DEMO");
+  const jobId = await enqueueJob({
+    type: "RUN_AUTO_APPLY_CYCLE",
+    runId: `run-${Date.now()}`,
+    priority: 0,
+    accountId,
+    payload: {
+      accountId,
+      maxAttempts: process.env.AUTO_APPLY_TOP_N
+        ? Number.parseInt(process.env.AUTO_APPLY_TOP_N, 10)
+        : undefined,
+      minScore: process.env.AUTO_APPLY_MIN_SCORE
+        ? Number.parseInt(process.env.AUTO_APPLY_MIN_SCORE, 10)
+        : undefined,
+    },
+  });
+  logger.info({ jobId }, "enqueued auto-apply cycle");
 }
 
 const port = Number.parseInt(process.env.PORT ?? "3001", 10);

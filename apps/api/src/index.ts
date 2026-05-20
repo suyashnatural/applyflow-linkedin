@@ -15,6 +15,40 @@ await app.register(cors, { origin: true });
 
 app.get("/healthz", async () => ({ ok: true }));
 
+app.get("/accounts", async () => {
+  const db = getDb();
+  const accounts = await db.linkedInAccount.findMany({
+    orderBy: { updatedAt: "desc" },
+    select: { id: true, createdAt: true, updatedAt: true },
+    take: 100,
+  });
+  return { accounts };
+});
+
+app.post("/accounts/:id/bootstrap-session", async (req, reply) => {
+  const accountId = (req.params as any).id as string;
+  if (!accountId || accountId.trim().length === 0) {
+    return reply.code(400).send({ error: "missing_account_id" });
+  }
+
+  const db = getDb();
+  await db.linkedInAccount.upsert({
+    where: { id: accountId },
+    update: {},
+    create: { id: accountId },
+  });
+
+  const jobId = await enqueueJob({
+    type: "LINKEDIN_SESSION_BOOTSTRAP",
+    runId: `run-${Date.now()}`,
+    priority: 0,
+    accountId,
+    payload: { accountId },
+  });
+
+  return { ok: true, jobId };
+});
+
 app.get("/healthz/db", async (_req, reply) => {
   const db = getDb();
   try {
@@ -467,9 +501,9 @@ app.post("/applications/:id/approve", async (req, reply) => {
 
 app.post("/auto-apply/run", async (req) => {
   const body = (req.body as any) ?? {};
-  const accountId = (body.accountId as string | undefined) ?? process.env.LINKEDIN_ACCOUNT_ID;
+  const accountId = body.accountId as string | undefined;
   if (!accountId || typeof accountId !== "string") {
-    throw new Error("auto-apply requires accountId (or LINKEDIN_ACCOUNT_ID)");
+    throw new Error("auto-apply requires accountId");
   }
 
   const maxAttemptsRaw = body.maxAttempts as number | undefined;

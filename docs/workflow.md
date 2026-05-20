@@ -42,6 +42,7 @@
 ## Auto-Apply Cycle (Dev)
 
 - Run one orchestration cycle by running API with `RUN_AUTO_APPLY_DEMO=1` (or call `POST /auto-apply/run`).
+- `POST /auto-apply/run` requires an explicit `accountId` in the JSON body (multi-account safe).
 - Configure `AUTO_APPLY_TOP_N`, `AUTO_APPLY_MIN_SCORE`, and `DAILY_APPLY_LIMIT`.
 
 ## Easy Apply Dry-Run (Dev)

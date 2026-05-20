@@ -8,10 +8,18 @@ type AnswerTemplate = {
   approved: boolean;
 };
 
+function apiAuthHeaders(): Record<string, string> {
+  const key = process.env.WEB_API_KEY;
+  return key ? { "x-applyflow-api-key": key } : {};
+}
+
 async function getTemplates(accountId?: string): Promise<AnswerTemplate[]> {
   const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
   const qs = accountId ? `?accountId=${encodeURIComponent(accountId)}` : "";
-  const res = await fetch(`${baseUrl}/templates${qs}`, { cache: "no-store" });
+  const res = await fetch(`${baseUrl}/templates${qs}`, {
+    cache: "no-store",
+    headers: apiAuthHeaders(),
+  });
   if (!res.ok) throw new Error(`failed to fetch templates: ${res.status}`);
   const json = (await res.json()) as { templates: AnswerTemplate[] };
   return json.templates ?? [];
@@ -21,7 +29,7 @@ async function postJson(path: string, body: unknown): Promise<void> {
   const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
   const res = await fetch(`${baseUrl}${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...apiAuthHeaders() },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`request failed: ${res.status}`);

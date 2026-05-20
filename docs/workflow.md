@@ -18,6 +18,8 @@
 
 - Use `.env` (not committed) for secrets.
 - Logs must not include secrets; logger redaction is enabled by default.
+- If `API_KEY` is set, API routes (except `/healthz*`) require header `x-applyflow-api-key`.
+- Set `WEB_API_KEY` so the web app can call the API when `API_KEY` is enabled.
 
 ## LinkedIn Session Bootstrap
 

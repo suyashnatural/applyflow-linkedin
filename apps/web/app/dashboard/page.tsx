@@ -169,6 +169,11 @@ export default async function DashboardPage(props: {
         <div style={{ marginTop: 8, fontSize: 12, color: "#777" }}>
           Tip: refresh the page after triggering a job to see new events and counts.
         </div>
+        <div style={{ marginTop: 10 }}>
+          <a href="/queue" style={{ color: "#2563eb", textDecoration: "none", fontSize: 14 }}>
+            View queue →
+          </a>
+        </div>
       </section>
 
       <section

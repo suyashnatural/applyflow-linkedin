@@ -94,39 +94,146 @@ async function postJson(path: string, body: unknown): Promise<void> {
   if (!res.ok) throw new Error(`request failed: ${res.status}`);
 }
 
+function getStatusTone(status: string): {
+  label: string;
+  background: string;
+  border: string;
+  text: string;
+} {
+  switch (status) {
+    case "submitted":
+      return {
+        label: "Submitted",
+        background: "#edfdf3",
+        border: "#abefc6",
+        text: "#067647",
+      };
+    case "failed":
+      return {
+        label: "Failed",
+        background: "#fef3f2",
+        border: "#fecdca",
+        text: "#b42318",
+      };
+    case "blocked":
+      return {
+        label: "Blocked",
+        background: "#fff4ed",
+        border: "#fdba74",
+        text: "#c2410c",
+      };
+    case "needs_review":
+      return {
+        label: "Needs Review",
+        background: "#fffaeb",
+        border: "#fedf89",
+        text: "#b54708",
+      };
+    case "in_progress":
+      return {
+        label: "In Progress",
+        background: "#eff8ff",
+        border: "#b2ddff",
+        text: "#175cd3",
+      };
+    default:
+      return {
+        label: status,
+        background: "#f8fafc",
+        border: "#d0d5dd",
+        text: "#344054",
+      };
+  }
+}
+
+function getLatestReason(application: Application): string | null {
+  const latestNonSuccess = [...application.steps].reverse().find((s) => s.state !== "succeeded");
+  if (!latestNonSuccess?.detail || typeof latestNonSuccess.detail !== "object") return null;
+  return (
+    ((latestNonSuccess.detail as any).reason as string | undefined) ??
+    ((latestNonSuccess.detail as any).error as string | undefined) ??
+    null
+  );
+}
+
+function getArtifactDir(step: ApplicationStep): string | null {
+  if (!step.detail || typeof step.detail !== "object") return null;
+  const detail = step.detail as any;
+  return typeof detail.artifactDir === "string" ? detail.artifactDir : null;
+}
+
+function getPhaseName(stepName: string): string {
+  if (stepName.startsWith("AI_")) return "AI";
+  if (stepName.includes("HUMAN") || stepName.includes("AUTO_SUBMIT_POLICY")) return "Review";
+  if (stepName.includes("SUBMIT")) return "Submit";
+  if (stepName.includes("DRY_RUN")) return "Dry Run";
+  return "Other";
+}
+
+function getFileHref(path: string): string {
+  const cleaned = path.startsWith("/") ? path : `/${path}`;
+  return cleaned;
+}
+
 export default async function ApplicationPage(props: { params: Promise<{ id: string }> }) {
   const { id } = await props.params;
   const application = await getApplication(id);
   const answers = await getAnswers(id);
   const readiness = await getReadiness(id);
-  const aiStep = application.steps.find((s) => s.name === "AI_DRAFT_ANSWERS");
-  const latestNonSuccess = [...application.steps].reverse().find((s) => s.state !== "succeeded");
-  const latestReason =
-    latestNonSuccess && latestNonSuccess.detail && typeof latestNonSuccess.detail === "object"
-      ? ((latestNonSuccess.detail as any).reason ?? (latestNonSuccess.detail as any).error ?? null)
-      : null;
 
-  const missingRequired = readiness.missingRequired ?? [];
   const canSubmit = readiness.ready;
+  const missingRequired = readiness.missingRequired ?? [];
+  const statusTone = getStatusTone(application.status);
+  const latestReason = getLatestReason(application);
+  const stepGroups = new Map<string, ApplicationStep[]>();
+
+  for (const step of application.steps) {
+    const phase = getPhaseName(step.name);
+    const items = stepGroups.get(phase) ?? [];
+    items.push(step);
+    stepGroups.set(phase, items);
+  }
+
+  const groupedSteps = [...stepGroups.entries()];
+  const artifactSteps = application.steps.filter((step) => Boolean(getArtifactDir(step)));
 
   return (
-    <main style={{ padding: 24, maxWidth: 960, margin: "0 auto" }}>
+    <main style={{ padding: 24, maxWidth: 1040, margin: "0 auto" }}>
       <a href="/" style={{ color: "#555" }}>
         ← Back
       </a>
       <h1 style={{ marginBottom: 8 }}>Application {application.id}</h1>
 
-      <section style={{ border: "1px solid #e5e5e5", borderRadius: 12, padding: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+      <section
+        style={{
+          border: `1px solid ${statusTone.border}`,
+          borderRadius: 16,
+          padding: 18,
+          background: statusTone.background,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 12,
+            alignItems: "flex-start",
+          }}
+        >
           <div>
-            <div style={{ fontWeight: 600 }}>
+            <div
+              style={{ fontSize: 12, fontWeight: 700, letterSpacing: 0.4, color: statusTone.text }}
+            >
+              {statusTone.label}
+            </div>
+            <div style={{ fontWeight: 700, fontSize: 20, marginTop: 4 }}>
               {application.jobPosting.title ?? "Untitled"} @{" "}
               {application.jobPosting.companyName ?? "Unknown"}
             </div>
-            <div style={{ color: "#555", fontSize: 12 }}>
-              {application.jobPosting.location ?? ""}
+            <div style={{ color: "#475467", fontSize: 13, marginTop: 6 }}>
+              {application.jobPosting.location ?? "Location unavailable"}
             </div>
-            <div style={{ color: "#555", fontSize: 12 }}>
+            <div style={{ color: "#475467", fontSize: 13, marginTop: 6 }}>
               <a href={application.jobPosting.url} target="_blank" rel="noreferrer">
                 LinkedIn job
               </a>
@@ -136,16 +243,37 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
                 ? ` · score: ${application.jobPosting.score}`
                 : ""}
             </div>
+            {application.jobPosting.scoreReason ? (
+              <div style={{ color: "#475467", fontSize: 13, marginTop: 6 }}>
+                score rationale: {application.jobPosting.scoreReason}
+              </div>
+            ) : null}
           </div>
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 12, color: "#555" }}>{application.status}</div>
-            <div style={{ fontSize: 12, color: "#777" }}>
-              {new Date(application.createdAt).toLocaleString()}
+
+          <div style={{ textAlign: "right", color: "#475467", fontSize: 12 }}>
+            <div>created: {new Date(application.createdAt).toLocaleString()}</div>
+            <div style={{ marginTop: 4 }}>
+              updated: {new Date(application.updatedAt).toLocaleString()}
             </div>
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
+        {latestReason ? (
+          <div
+            style={{
+              marginTop: 14,
+              padding: 12,
+              borderRadius: 12,
+              background: "#ffffffb3",
+              border: "1px solid rgba(16, 24, 40, 0.08)",
+            }}
+          >
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#344054" }}>Latest outcome</div>
+            <div style={{ marginTop: 4, fontSize: 14, color: "#344054" }}>{latestReason}</div>
+          </div>
+        ) : null}
+
+        <div style={{ display: "flex", gap: 12, marginTop: 16, flexWrap: "wrap" }}>
           <form
             action={async () => {
               "use server";
@@ -190,204 +318,241 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
         >
           <div style={{ fontWeight: 600 }}>Not ready to submit</div>
           <div style={{ fontSize: 12, color: "#6b4a00" }}>
-            Approve answers for required questions (or apply templates) before submitting.
+            Approve answers for required questions or reuse templates before submitting.
           </div>
           <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
-            {missingRequired.slice(0, 20).map((l) => (
-              <li key={l} style={{ fontSize: 12 }}>
-                {l}
+            {missingRequired.slice(0, 20).map((label) => (
+              <li key={label} style={{ fontSize: 12 }}>
+                {label}
               </li>
             ))}
           </ul>
         </section>
-      ) : null}
-
-      <h2 style={{ marginTop: 24 }}>Answers</h2>
-      <div style={{ display: "grid", gap: 12 }}>
-        {answers
-          .slice()
-          .sort(
-            (a, b) =>
-              Number(b.required) - Number(a.required) ||
-              a.questionLabel.localeCompare(b.questionLabel)
-          )
-          .map((a) => (
-            <section key={a.id} style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                <div>
-                  <div style={{ fontWeight: 600 }}>
-                    {a.questionLabel}
-                    {a.required ? <span style={{ color: "#b42318" }}> *</span> : null}
-                  </div>
-                  <div style={{ fontSize: 12, color: "#777" }}>
-                    confidence: {Number.isFinite(a.confidence) ? a.confidence.toFixed(2) : "0.00"} ·{" "}
-                    source: {a.source}
-                  </div>
-                </div>
-                <div style={{ textAlign: "right", fontSize: 12, color: "#555" }}>
-                  updated: {new Date(a.updatedAt).toLocaleString()}
-                </div>
-              </div>
-
-              <form
-                action={async (formData) => {
-                  "use server";
-                  const questionId = String(formData.get("questionId") ?? "");
-                  const questionLabel = String(formData.get("questionLabel") ?? "");
-                  const answer = String(formData.get("answer") ?? "");
-                  const approved = formData.get("approved") === "on";
-                  const required = formData.get("required") === "on";
-                  const requiresApproval = formData.get("requiresApproval") === "on";
-                  const saveAsTemplate = formData.get("saveAsTemplate") === "on";
-                  const confidence = Number(formData.get("confidence") ?? 0);
-                  await postJson(`/applications/${application.id}/answers/upsert`, {
-                    questionId,
-                    questionLabel,
-                    answer,
-                    approved,
-                    required,
-                    requiresApproval,
-                    confidence,
-                    saveAsTemplate,
-                  });
-                }}
-              >
-                <input type="hidden" name="questionId" value={a.questionId} />
-                <input type="hidden" name="questionLabel" value={a.questionLabel} />
-                <input type="hidden" name="confidence" value={a.confidence} />
-                <label style={{ display: "block", marginTop: 8, fontSize: 12, color: "#555" }}>
-                  Draft answer
-                </label>
-                <textarea
-                  name="answer"
-                  defaultValue={a.answer}
-                  rows={4}
-                  style={{
-                    marginTop: 6,
-                    width: "100%",
-                    padding: 10,
-                    borderRadius: 10,
-                    border: "1px solid #ddd",
-                    fontFamily: "inherit",
-                  }}
-                />
-                <div style={{ display: "flex", gap: 16, marginTop: 10, alignItems: "center" }}>
-                  <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
-                    <input type="checkbox" name="approved" defaultChecked={a.approved} />
-                    Approved
-                  </label>
-                  <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
-                    <input
-                      type="checkbox"
-                      name="requiresApproval"
-                      defaultChecked={a.requiresApproval}
-                    />
-                    Requires approval
-                  </label>
-                  <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
-                    <input type="checkbox" name="required" defaultChecked={a.required} />
-                    Required
-                  </label>
-                  <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
-                    <input type="checkbox" name="saveAsTemplate" defaultChecked={false} />
-                    Save as template
-                  </label>
-                  <button style={{ padding: "6px 10px" }}>Save</button>
-                </div>
-              </form>
-            </section>
-          ))}
-
-        {answers.length === 0 ? (
-          <div style={{ padding: 16, border: "1px dashed #ccc", borderRadius: 12, color: "#555" }}>
-            No answers found yet. Run `AI_DRAFT_ANSWERS` for this application.
-          </div>
-        ) : null}
-      </div>
-
-      {latestNonSuccess ? (
+      ) : (
         <section
           style={{
             marginTop: 16,
-            border: "1px solid #eee",
+            border: "1px solid #abefc6",
             borderRadius: 12,
             padding: 12,
-            background: "#fafafa",
+            background: "#edfdf3",
+            color: "#067647",
           }}
         >
-          <div style={{ fontWeight: 600 }}>Latest outcome</div>
-          <div style={{ fontSize: 12, color: "#555" }}>
-            {latestNonSuccess.name} · {latestNonSuccess.state}
-            {latestReason ? ` · ${String(latestReason)}` : ""}
+          <div style={{ fontWeight: 600 }}>Ready to submit</div>
+          <div style={{ fontSize: 12 }}>
+            Required answers are approved and the application can move forward.
+          </div>
+        </section>
+      )}
+
+      {artifactSteps.length > 0 ? (
+        <section style={{ marginTop: 24 }}>
+          <h2 style={{ marginBottom: 10 }}>Artifacts</h2>
+          <div style={{ display: "grid", gap: 10 }}>
+            {artifactSteps.map((step) => {
+              const artifactDir = getArtifactDir(step)!;
+              return (
+                <div
+                  key={`${step.id}-artifact`}
+                  style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}
+                >
+                  <div style={{ fontWeight: 600 }}>
+                    {step.name} · {step.state}
+                  </div>
+                  <div style={{ marginTop: 6, fontSize: 12, color: "#555" }}>
+                    <a href={getFileHref(artifactDir)} target="_blank" rel="noreferrer">
+                      {artifactDir}
+                    </a>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </section>
       ) : null}
 
-      <h2 style={{ marginTop: 24 }}>Timeline</h2>
-      {aiStep?.detail ? (
-        <>
-          <h3 style={{ marginTop: 16 }}>AI Draft Answers</h3>
-          <pre
-            style={{
-              marginTop: 8,
-              padding: 12,
-              borderRadius: 12,
-              background: "#fafafa",
-              overflow: "auto",
-            }}
-          >
-            {JSON.stringify(aiStep.detail, null, 2)}
-          </pre>
-        </>
-      ) : null}
-
-      {application.steps.some((s) => (s.detail as any)?.artifactDir) ? (
-        <>
-          <h3 style={{ marginTop: 16 }}>Artifacts</h3>
-          <div style={{ display: "grid", gap: 8 }}>
-            {application.steps
-              .filter((s) => Boolean((s.detail as any)?.artifactDir))
-              .map((s) => (
-                <div
-                  key={`${s.id}-artifact`}
-                  style={{ padding: 12, border: "1px solid #eee", borderRadius: 12 }}
-                >
-                  <div style={{ fontWeight: 600 }}>{s.name}</div>
-                  <div style={{ fontSize: 12, color: "#555" }}>
-                    artifactDir: {(s.detail as any).artifactDir}
+      <section style={{ marginTop: 24 }}>
+        <h2 style={{ marginBottom: 10 }}>Answers</h2>
+        <div style={{ display: "grid", gap: 12 }}>
+          {answers
+            .slice()
+            .sort(
+              (a, b) =>
+                Number(b.required) - Number(a.required) ||
+                a.questionLabel.localeCompare(b.questionLabel)
+            )
+            .map((answer) => (
+              <section
+                key={answer.id}
+                style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                  <div>
+                    <div style={{ fontWeight: 600 }}>
+                      {answer.questionLabel}
+                      {answer.required ? <span style={{ color: "#b42318" }}> *</span> : null}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#777" }}>
+                      confidence:{" "}
+                      {Number.isFinite(answer.confidence) ? answer.confidence.toFixed(2) : "0.00"}
+                      {" · "}source: {answer.source}
+                      {" · "}approved: {answer.approved ? "yes" : "no"}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right", fontSize: 12, color: "#555" }}>
+                    updated: {new Date(answer.updatedAt).toLocaleString()}
                   </div>
                 </div>
-              ))}
-          </div>
-        </>
-      ) : null}
-      <div style={{ display: "grid", gap: 12 }}>
-        {application.steps.map((s) => (
-          <div key={s.id} style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-              <div style={{ fontWeight: 600 }}>
-                {s.name} · {s.state}
-              </div>
-              <div style={{ fontSize: 12, color: "#777" }}>
-                {new Date(s.createdAt).toLocaleString()}
-              </div>
+
+                <form
+                  action={async (formData) => {
+                    "use server";
+                    const questionId = String(formData.get("questionId") ?? "");
+                    const questionLabel = String(formData.get("questionLabel") ?? "");
+                    const value = String(formData.get("answer") ?? "");
+                    const approved = formData.get("approved") === "on";
+                    const required = formData.get("required") === "on";
+                    const requiresApproval = formData.get("requiresApproval") === "on";
+                    const saveAsTemplate = formData.get("saveAsTemplate") === "on";
+                    const confidence = Number(formData.get("confidence") ?? 0);
+
+                    await postJson(`/applications/${application.id}/answers/upsert`, {
+                      questionId,
+                      questionLabel,
+                      answer: value,
+                      approved,
+                      required,
+                      requiresApproval,
+                      confidence,
+                      saveAsTemplate,
+                    });
+                  }}
+                >
+                  <input type="hidden" name="questionId" value={answer.questionId} />
+                  <input type="hidden" name="questionLabel" value={answer.questionLabel} />
+                  <input type="hidden" name="confidence" value={answer.confidence} />
+
+                  <label style={{ display: "block", marginTop: 8, fontSize: 12, color: "#555" }}>
+                    Draft answer
+                  </label>
+                  <textarea
+                    name="answer"
+                    defaultValue={answer.answer}
+                    rows={4}
+                    style={{
+                      marginTop: 6,
+                      width: "100%",
+                      padding: 10,
+                      borderRadius: 10,
+                      border: "1px solid #ddd",
+                      fontFamily: "inherit",
+                    }}
+                  />
+
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 16,
+                      marginTop: 10,
+                      alignItems: "center",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
+                      <input type="checkbox" name="approved" defaultChecked={answer.approved} />
+                      Approved
+                    </label>
+                    <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
+                      <input
+                        type="checkbox"
+                        name="requiresApproval"
+                        defaultChecked={answer.requiresApproval}
+                      />
+                      Requires approval
+                    </label>
+                    <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
+                      <input type="checkbox" name="required" defaultChecked={answer.required} />
+                      Required
+                    </label>
+                    <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
+                      <input type="checkbox" name="saveAsTemplate" defaultChecked={false} />
+                      Save as template
+                    </label>
+                    <button style={{ padding: "6px 10px" }}>Save</button>
+                  </div>
+                </form>
+              </section>
+            ))}
+
+          {answers.length === 0 ? (
+            <div
+              style={{ padding: 16, border: "1px dashed #ccc", borderRadius: 12, color: "#555" }}
+            >
+              No answers found yet. Run `AI_DRAFT_ANSWERS` for this application.
             </div>
-            {s.detail ? (
-              <pre
-                style={{
-                  marginTop: 8,
-                  padding: 12,
-                  borderRadius: 12,
-                  background: "#fafafa",
-                  overflow: "auto",
-                }}
-              >
-                {JSON.stringify(s.detail, null, 2)}
-              </pre>
-            ) : null}
-          </div>
-        ))}
-      </div>
+          ) : null}
+        </div>
+      </section>
+
+      <section style={{ marginTop: 24 }}>
+        <h2 style={{ marginBottom: 10 }}>Timeline</h2>
+        <div style={{ display: "grid", gap: 16 }}>
+          {groupedSteps.map(([phase, steps]) => (
+            <section
+              key={phase}
+              style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 14 }}
+            >
+              <div style={{ fontWeight: 700, marginBottom: 10 }}>{phase}</div>
+              <div style={{ display: "grid", gap: 10 }}>
+                {steps.map((step) => (
+                  <div
+                    key={step.id}
+                    style={{ border: "1px solid #f2f4f7", borderRadius: 12, padding: 12 }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                      <div style={{ fontWeight: 600 }}>
+                        {step.name} · {step.state}
+                      </div>
+                      <div style={{ fontSize: 12, color: "#777" }}>
+                        {new Date(step.createdAt).toLocaleString()}
+                      </div>
+                    </div>
+
+                    {getArtifactDir(step) ? (
+                      <div style={{ marginTop: 8, fontSize: 12 }}>
+                        artifact:{" "}
+                        <a
+                          href={getFileHref(getArtifactDir(step)!)}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {getArtifactDir(step)}
+                        </a>
+                      </div>
+                    ) : null}
+
+                    {step.detail ? (
+                      <pre
+                        style={{
+                          marginTop: 8,
+                          padding: 12,
+                          borderRadius: 12,
+                          background: "#fafafa",
+                          overflow: "auto",
+                          fontSize: 12,
+                        }}
+                      >
+                        {JSON.stringify(step.detail, null, 2)}
+                      </pre>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      </section>
     </main>
   );
 }

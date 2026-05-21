@@ -366,6 +366,41 @@ app.post("/templates/:id/delete", async (req, reply) => {
   return { ok: true };
 });
 
+app.post("/templates/:id/clone-to-account", async (req, reply) => {
+  const id = (req.params as any).id as string;
+  const body = (req.body as any) ?? {};
+  const accountId = body.accountId as string | undefined;
+  if (!accountId || typeof accountId !== "string") {
+    return reply.code(400).send({ error: "missing_account_id" });
+  }
+
+  const db = getDb();
+  const template = await db.answerTemplate.findUnique({ where: { id } });
+  if (!template) return reply.code(404).send({ error: "not_found" });
+
+  await db.linkedInAccount.upsert({
+    where: { id: accountId },
+    update: {},
+    create: { id: accountId },
+  });
+
+  const cloned = await db.answerTemplate.upsert({
+    where: { accountId_fingerprint: { accountId, fingerprint: template.fingerprint } },
+    create: {
+      accountId,
+      fingerprint: template.fingerprint,
+      answer: template.answer,
+      approved: template.approved,
+    },
+    update: {
+      answer: template.answer,
+      approved: template.approved,
+    },
+  });
+
+  return { template: cloned };
+});
+
 app.post("/applications/:id/answers/upsert", async (req, reply) => {
   const applicationId = (req.params as any).id as string;
   const body = (req.body as any) ?? {};

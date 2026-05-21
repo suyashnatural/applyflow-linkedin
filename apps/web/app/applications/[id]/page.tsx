@@ -1,3 +1,5 @@
+import { classifyApplicationOutcome, getApplicationOutcomePresentation } from "@applyflow/shared";
+
 type JobPosting = {
   id: string;
   url: string;
@@ -94,58 +96,6 @@ async function postJson(path: string, body: unknown): Promise<void> {
   if (!res.ok) throw new Error(`request failed: ${res.status}`);
 }
 
-function getStatusTone(status: string): {
-  label: string;
-  background: string;
-  border: string;
-  text: string;
-} {
-  switch (status) {
-    case "submitted":
-      return {
-        label: "Submitted",
-        background: "#edfdf3",
-        border: "#abefc6",
-        text: "#067647",
-      };
-    case "failed":
-      return {
-        label: "Failed",
-        background: "#fef3f2",
-        border: "#fecdca",
-        text: "#b42318",
-      };
-    case "blocked":
-      return {
-        label: "Blocked",
-        background: "#fff4ed",
-        border: "#fdba74",
-        text: "#c2410c",
-      };
-    case "needs_review":
-      return {
-        label: "Needs Review",
-        background: "#fffaeb",
-        border: "#fedf89",
-        text: "#b54708",
-      };
-    case "in_progress":
-      return {
-        label: "In Progress",
-        background: "#eff8ff",
-        border: "#b2ddff",
-        text: "#175cd3",
-      };
-    default:
-      return {
-        label: status,
-        background: "#f8fafc",
-        border: "#d0d5dd",
-        text: "#344054",
-      };
-  }
-}
-
 function getLatestReason(application: Application): string | null {
   const latestNonSuccess = [...application.steps].reverse().find((s) => s.state !== "succeeded");
   if (!latestNonSuccess?.detail || typeof latestNonSuccess.detail !== "object") return null;
@@ -181,10 +131,15 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
   const answers = await getAnswers(id);
   const readiness = await getReadiness(id);
 
+  const latestReason = getLatestReason(application);
+  const outcome = classifyApplicationOutcome({
+    status: application.status,
+    readinessReady: readiness.ready,
+    latestReason,
+  });
+  const outcomeTone = getApplicationOutcomePresentation(outcome);
   const canSubmit = readiness.ready;
   const missingRequired = readiness.missingRequired ?? [];
-  const statusTone = getStatusTone(application.status);
-  const latestReason = getLatestReason(application);
   const stepGroups = new Map<string, ApplicationStep[]>();
 
   for (const step of application.steps) {
@@ -206,10 +161,10 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
 
       <section
         style={{
-          border: `1px solid ${statusTone.border}`,
+          border: `1px solid ${outcomeTone.border}`,
           borderRadius: 16,
           padding: 18,
-          background: statusTone.background,
+          background: outcomeTone.background,
         }}
       >
         <div
@@ -222,9 +177,9 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
         >
           <div>
             <div
-              style={{ fontSize: 12, fontWeight: 700, letterSpacing: 0.4, color: statusTone.text }}
+              style={{ fontSize: 12, fontWeight: 700, letterSpacing: 0.4, color: outcomeTone.text }}
             >
-              {statusTone.label}
+              {outcomeTone.label}
             </div>
             <div style={{ fontWeight: 700, fontSize: 20, marginTop: 4 }}>
               {application.jobPosting.title ?? "Untitled"} @{" "}
@@ -273,6 +228,10 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
           </div>
         ) : null}
 
+        <div style={{ marginTop: latestReason ? 12 : 14, fontSize: 14, color: "#344054" }}>
+          {outcomeTone.summary}
+        </div>
+
         <div style={{ display: "flex", gap: 12, marginTop: 16, flexWrap: "wrap" }}>
           <form
             action={async () => {
@@ -306,7 +265,7 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
         </div>
       </section>
 
-      {!canSubmit ? (
+      {outcome === "needs_answers" ? (
         <section
           style={{
             marginTop: 16,
@@ -328,7 +287,7 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
             ))}
           </ul>
         </section>
-      ) : (
+      ) : outcome === "ready_to_submit" ? (
         <section
           style={{
             marginTop: 16,
@@ -340,11 +299,9 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
           }}
         >
           <div style={{ fontWeight: 600 }}>Ready to submit</div>
-          <div style={{ fontSize: 12 }}>
-            Required answers are approved and the application can move forward.
-          </div>
+          <div style={{ fontSize: 12 }}>{outcomeTone.summary}</div>
         </section>
-      )}
+      ) : null}
 
       {artifactSteps.length > 0 ? (
         <section style={{ marginTop: 24 }}>

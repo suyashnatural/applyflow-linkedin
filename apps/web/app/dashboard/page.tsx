@@ -1,3 +1,5 @@
+import { getApplicationOutcomePresentation } from "@applyflow/shared";
+
 type AutoApplyCycleEvent = {
   id: string;
   time: string;
@@ -19,6 +21,25 @@ type LinkedInAccount = { id: string; createdAt: string; updatedAt: string };
 function apiAuthHeaders(): Record<string, string> {
   const key = process.env.WEB_API_KEY;
   return key ? { "x-applyflow-api-key": key } : {};
+}
+
+function getEventLabel(type: string): string {
+  switch (type) {
+    case "AUTO_APPLY_CYCLE":
+      return "Auto-Apply Cycle";
+    case "AUTO_APPLY_SKIPPED_DUE_TO_LIMIT":
+      return "Skipped: Daily Limit Reached";
+    case "AUTO_APPLY_NO_ELIGIBLE":
+      return "Skipped: No Eligible Jobs";
+    case "LINKEDIN_BLOCKED":
+      return "Blocked By LinkedIn";
+    default:
+      return type
+        .toLowerCase()
+        .split("_")
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" ");
+  }
 }
 
 async function getAccounts(): Promise<LinkedInAccount[]> {
@@ -64,6 +85,9 @@ export default async function DashboardPage(props: {
 
   const defaultMaxAttemptsRaw = process.env.AUTO_APPLY_TOP_N ?? "5";
   const defaultMinScoreRaw = process.env.AUTO_APPLY_MIN_SCORE ?? "70";
+  const submittedTone = getApplicationOutcomePresentation("submitted");
+  const blockedTone = getApplicationOutcomePresentation("blocked_checkpoint");
+  const reviewTone = getApplicationOutcomePresentation("needs_answers");
 
   return (
     <main style={{ padding: 24, maxWidth: 960, margin: "0 auto" }}>
@@ -94,9 +118,15 @@ export default async function DashboardPage(props: {
         <div style={{ fontWeight: 600 }}>Today</div>
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 10 }}>
           <div>cycles: {stats.today.cycles}</div>
-          <div>submitted: {stats.today.submitted}</div>
-          <div>blocked: {stats.today.blocked}</div>
-          <div>needs_review: {stats.today.needsReview}</div>
+          <div style={{ color: submittedTone.text }}>
+            {submittedTone.label}: {stats.today.submitted}
+          </div>
+          <div style={{ color: blockedTone.text }}>
+            {blockedTone.label}: {stats.today.blocked}
+          </div>
+          <div style={{ color: reviewTone.text }}>
+            {reviewTone.label}: {stats.today.needsReview}
+          </div>
         </div>
       </section>
 
@@ -195,7 +225,7 @@ export default async function DashboardPage(props: {
         {stats.recent.cycles.map((e) => (
           <section key={e.id} style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-              <div style={{ fontWeight: 600 }}>{e.type}</div>
+              <div style={{ fontWeight: 600 }}>{getEventLabel(e.type)}</div>
               <div style={{ fontSize: 12, color: "#777" }}>{new Date(e.time).toLocaleString()}</div>
             </div>
             <pre

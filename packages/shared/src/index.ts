@@ -9,3 +9,4 @@ export type LinkedInAccountId = z.infer<typeof LinkedInAccountIdSchema>;
 export * from "./approvalPolicy.js";
 export * from "./failures.js";
 export * from "./fingerprint.js";
+export * from "./outcomes.js";

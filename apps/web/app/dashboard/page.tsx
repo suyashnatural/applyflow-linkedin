@@ -42,6 +42,17 @@ async function getStats(accountId: string): Promise<AutoApplyStats> {
   return (await res.json()) as AutoApplyStats;
 }
 
+async function postJson(path: string, body: unknown): Promise<any> {
+  const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...apiAuthHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`request failed: ${res.status}`);
+  return (await res.json()) as any;
+}
+
 export default async function DashboardPage(props: {
   searchParams: Promise<{ accountId?: string }>;
 }) {
@@ -50,6 +61,9 @@ export default async function DashboardPage(props: {
   const accountId =
     sp.accountId ?? accounts.at(0)?.id ?? process.env.LINKEDIN_ACCOUNT_ID ?? "default";
   const stats = await getStats(accountId);
+
+  const defaultMaxAttemptsRaw = process.env.AUTO_APPLY_TOP_N ?? "5";
+  const defaultMinScoreRaw = process.env.AUTO_APPLY_MIN_SCORE ?? "70";
 
   return (
     <main style={{ padding: 24, maxWidth: 960, margin: "0 auto" }}>
@@ -83,6 +97,77 @@ export default async function DashboardPage(props: {
           <div>submitted: {stats.today.submitted}</div>
           <div>blocked: {stats.today.blocked}</div>
           <div>needs_review: {stats.today.needsReview}</div>
+        </div>
+      </section>
+
+      <section
+        style={{ marginTop: 16, border: "1px solid #e5e5e5", borderRadius: 12, padding: 16 }}
+      >
+        <div style={{ fontWeight: 600 }}>Controls</div>
+        <div
+          style={{
+            display: "flex",
+            gap: 12,
+            flexWrap: "wrap",
+            alignItems: "center",
+            marginTop: 10,
+          }}
+        >
+          <form
+            action={async () => {
+              "use server";
+              await postJson(`/accounts/${encodeURIComponent(accountId)}/bootstrap-session`, {});
+            }}
+          >
+            <button style={{ padding: "8px 12px" }}>Bootstrap session</button>
+          </form>
+
+          <form
+            action={async (formData) => {
+              "use server";
+              const maxAttempts = Number(formData.get("maxAttempts") ?? 0);
+              const minScore = Number(formData.get("minScore") ?? 0);
+              await postJson(`/auto-apply/run`, {
+                accountId,
+                maxAttempts: Number.isFinite(maxAttempts) ? maxAttempts : undefined,
+                minScore: Number.isFinite(minScore) ? minScore : undefined,
+              });
+            }}
+            style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}
+          >
+            <label style={{ fontSize: 12, color: "#555" }}>
+              maxAttempts:
+              <input
+                name="maxAttempts"
+                defaultValue={defaultMaxAttemptsRaw}
+                style={{
+                  marginLeft: 8,
+                  padding: "6px 8px",
+                  borderRadius: 10,
+                  border: "1px solid #ddd",
+                  width: 90,
+                }}
+              />
+            </label>
+            <label style={{ fontSize: 12, color: "#555" }}>
+              minScore:
+              <input
+                name="minScore"
+                defaultValue={defaultMinScoreRaw}
+                style={{
+                  marginLeft: 8,
+                  padding: "6px 8px",
+                  borderRadius: 10,
+                  border: "1px solid #ddd",
+                  width: 90,
+                }}
+              />
+            </label>
+            <button style={{ padding: "8px 12px" }}>Run auto-apply cycle now</button>
+          </form>
+        </div>
+        <div style={{ marginTop: 8, fontSize: 12, color: "#777" }}>
+          Tip: refresh the page after triggering a job to see new events and counts.
         </div>
       </section>
 

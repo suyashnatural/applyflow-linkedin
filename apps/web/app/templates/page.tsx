@@ -42,6 +42,8 @@ export default async function TemplatesPage(props: {
   const accountId = sp.accountId;
   const templates = await getTemplates(accountId);
 
+  const defaultCloneAccountId = accountId ?? process.env.LINKEDIN_ACCOUNT_ID ?? "default";
+
   return (
     <main style={{ padding: 24, maxWidth: 960, margin: "0 auto" }}>
       <a href="/" style={{ color: "#555" }}>
@@ -96,6 +98,8 @@ export default async function TemplatesPage(props: {
                 "use server";
                 const answer = String(formData.get("answer") ?? "");
                 const approved = formData.get("approved") === "on";
+                const allowGlobalEdit = formData.get("allowGlobalEdit") === "on";
+                if (t.accountId === null && !allowGlobalEdit) return;
                 await postJson(`/templates/${t.id}/update`, { answer, approved });
               }}
             >
@@ -120,18 +124,60 @@ export default async function TemplatesPage(props: {
                   <input type="checkbox" name="approved" defaultChecked={t.approved} />
                   Approved
                 </label>
+                {t.accountId === null ? (
+                  <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
+                    <input type="checkbox" name="allowGlobalEdit" defaultChecked={false} />
+                    Allow global edit (danger)
+                  </label>
+                ) : null}
                 <button style={{ padding: "6px 10px" }}>Save</button>
               </div>
             </form>
 
+            {t.accountId === null ? (
+              <form
+                action={async (formData) => {
+                  "use server";
+                  const targetAccountId = String(formData.get("accountId") ?? "").trim();
+                  if (!targetAccountId) return;
+                  await postJson(`/templates/${t.id}/clone-to-account`, {
+                    accountId: targetAccountId,
+                  });
+                }}
+                style={{ marginTop: 10 }}
+              >
+                <label style={{ fontSize: 12, color: "#555" }}>
+                  Clone to accountId:
+                  <input
+                    name="accountId"
+                    defaultValue={defaultCloneAccountId}
+                    style={{
+                      marginLeft: 8,
+                      padding: "6px 8px",
+                      borderRadius: 10,
+                      border: "1px solid #ddd",
+                      width: 240,
+                    }}
+                  />
+                </label>
+                <button style={{ marginLeft: 8, padding: "6px 10px" }}>Clone</button>
+              </form>
+            ) : null}
+
             <form
               action={async () => {
                 "use server";
+                if (t.accountId === null) return;
                 await postJson(`/templates/${t.id}/delete`, {});
               }}
               style={{ marginTop: 10 }}
             >
-              <button style={{ padding: "6px 10px", color: "#b42318" }}>Delete</button>
+              <button
+                style={{ padding: "6px 10px", color: "#b42318" }}
+                disabled={t.accountId === null}
+              >
+                Delete
+              </button>
             </form>
           </section>
         ))}

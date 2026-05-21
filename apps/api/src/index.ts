@@ -2,6 +2,13 @@ import { getConfig } from "@applyflow/config";
 import { getDb } from "@applyflow/db";
 import { logger } from "@applyflow/observability";
 import { enqueueJob } from "@applyflow/queue";
+import {
+  clampScheduleAttempts,
+  clampScheduleScore,
+  computeNextRunAt,
+  DEFAULT_AUTO_APPLY_CRON,
+  DEFAULT_AUTO_APPLY_TIMEZONE,
+} from "@applyflow/scheduling";
 import { fingerprintQuestionLabel, isSensitiveQuestionLabel } from "@applyflow/shared";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
@@ -43,6 +50,90 @@ app.get("/accounts", async () => {
     take: 100,
   });
   return { accounts };
+});
+
+app.get("/auto-apply/schedules", async (req) => {
+  const accountId = (req.query as any)?.accountId as string | undefined;
+  const db = getDb();
+  const args: Parameters<typeof db.autoApplySchedule.findMany>[0] = {
+    orderBy: { updatedAt: "desc" },
+    take: 100,
+  };
+  if (typeof accountId === "string" && accountId.trim().length > 0) {
+    args.where = { accountId: accountId.trim() };
+  }
+  const schedules = await db.autoApplySchedule.findMany(args);
+  return { schedules };
+});
+
+app.post("/auto-apply/schedules/upsert", async (req, reply) => {
+  const body = (req.body as any) ?? {};
+  const accountId = typeof body.accountId === "string" ? body.accountId.trim() : "";
+  if (!accountId) return reply.code(400).send({ error: "missing_account_id" });
+
+  const cron =
+    typeof body.cron === "string" && body.cron.trim().length > 0
+      ? body.cron.trim()
+      : DEFAULT_AUTO_APPLY_CRON;
+  const timezone =
+    typeof body.timezone === "string" && body.timezone.trim().length > 0
+      ? body.timezone.trim()
+      : DEFAULT_AUTO_APPLY_TIMEZONE;
+  const enabled = body.enabled === true;
+  const rawMaxAttempts = body.maxAttempts;
+  const rawMinScore = body.minScore;
+  const maxAttempts = clampScheduleAttempts(
+    rawMaxAttempts === "" || rawMaxAttempts == null
+      ? null
+      : typeof rawMaxAttempts === "number"
+        ? rawMaxAttempts
+        : Number(rawMaxAttempts)
+  );
+  const minScore = clampScheduleScore(
+    rawMinScore === "" || rawMinScore == null
+      ? null
+      : typeof rawMinScore === "number"
+        ? rawMinScore
+        : Number(rawMinScore)
+  );
+
+  let nextRunAt: Date;
+  try {
+    nextRunAt = computeNextRunAt({ cron, timezone });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return reply.code(400).send({ error: "invalid_schedule", message });
+  }
+
+  const db = getDb();
+  await db.linkedInAccount.upsert({
+    where: { id: accountId },
+    update: {},
+    create: { id: accountId },
+  });
+
+  const schedule = await db.autoApplySchedule.upsert({
+    where: { accountId },
+    update: {
+      enabled,
+      cron,
+      timezone,
+      maxAttempts,
+      minScore,
+      nextRunAt,
+    },
+    create: {
+      accountId,
+      enabled,
+      cron,
+      timezone,
+      maxAttempts,
+      minScore,
+      nextRunAt,
+    },
+  });
+
+  return { ok: true, schedule };
 });
 
 app.post("/accounts/:id/bootstrap-session", async (req, reply) => {

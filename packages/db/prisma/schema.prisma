@@ -15,6 +15,7 @@ model LinkedInAccount {
   jobPostings   JobPosting[]
   applications  Application[]
   events        Event[]
+  autoApplySchedule AutoApplySchedule?
 
   @@map("linkedin_accounts")
 }
@@ -146,6 +147,26 @@ model Event {
 
   @@index([runId, time])
   @@map("events")
+}
+
+model AutoApplySchedule {
+  id              String   @id @default(cuid())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  accountId       String   @unique
+  account         LinkedInAccount @relation(fields: [accountId], references: [id])
+
+  enabled         Boolean  @default(false)
+  cron            String
+  timezone        String   @default("UTC")
+  maxAttempts     Int?
+  minScore        Int?
+  nextRunAt       DateTime
+  lastTriggeredAt DateTime?
+
+  @@index([enabled, nextRunAt])
+  @@map("auto_apply_schedules")
 }
 
 enum QueueJobStatus {

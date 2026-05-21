@@ -1,5 +1,5 @@
 {
-  "name": "@applyflow/api",
+  "name": "@applyflow/scheduler",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -17,8 +17,6 @@
     "@applyflow/observability": "0.0.0",
     "@applyflow/queue": "0.0.0",
     "@applyflow/scheduling": "0.0.0",
-    "@applyflow/shared": "0.0.0",
-    "@fastify/cors": "^10.1.0",
-    "fastify": "^5.5.0"
+    "@prisma/client": "^6.15.0"
   }
 }

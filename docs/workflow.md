@@ -47,6 +47,14 @@
 - `POST /auto-apply/run` requires an explicit `accountId` in the JSON body (multi-account safe).
 - Configure `AUTO_APPLY_TOP_N`, `AUTO_APPLY_MIN_SCORE`, and `DAILY_APPLY_LIMIT`.
 
+## Scheduled Auto-Apply
+
+- Start the scheduler with `npm run dev:scheduler`.
+- Save or update a per-account schedule with `POST /auto-apply/schedules/upsert`.
+- Schedules support `enabled`, `cron`, `timezone`, `maxAttempts`, and `minScore`.
+- The scheduler respects the existing cycle pipeline and will skip firing if a cycle is already queued or running for that account.
+- Configure `AUTO_APPLY_SCHEDULE_DEFAULT_CRON`, `AUTO_APPLY_SCHEDULE_DEFAULT_TIMEZONE`, `SCHEDULER_POLL_MS`, and `SCHEDULER_BATCH_SIZE`.
+
 ## Easy Apply Dry-Run (Dev)
 
 - Ensure session is logged in first (HEADFUL default is on).

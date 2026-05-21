@@ -15,9 +15,10 @@
   "scripts": {
     "dev": "npm run dev -w @applyflow/web",
     "dev:api": "npm run dev -w @applyflow/api",
+    "dev:scheduler": "npm run dev -w @applyflow/scheduler",
     "dev:web": "npm run dev -w @applyflow/web",
     "dev:worker": "npm run dev -w @applyflow/worker",
-    "dev:all": "concurrently -n api,web,worker -c blue,green,magenta \"npm run dev:api\" \"npm run dev:web\" \"npm run dev:worker\"",
+    "dev:all": "concurrently -n api,web,worker,scheduler -c blue,green,magenta,cyan \"npm run dev:api\" \"npm run dev:web\" \"npm run dev:worker\" \"npm run dev:scheduler\"",
     "build": "npm run build --workspaces",
     "lint": "eslint .",
     "typecheck": "npm run typecheck --workspaces",

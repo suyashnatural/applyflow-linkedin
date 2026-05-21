@@ -171,6 +171,59 @@ app.get("/stats/auto-apply", async (req) => {
   };
 });
 
+app.get("/queue/jobs", async (req) => {
+  const status = (req.query as any)?.status as string | undefined;
+  const limitRaw = (req.query as any)?.limit as string | number | undefined;
+  const limit =
+    typeof limitRaw === "number"
+      ? Math.floor(limitRaw)
+      : typeof limitRaw === "string"
+        ? Number.parseInt(limitRaw, 10)
+        : 50;
+  const take = Number.isFinite(limit) ? Math.max(1, Math.min(200, limit)) : 50;
+
+  const db = getDb();
+  const where: Prisma.QueueJobWhereInput = {};
+  if (typeof status === "string" && status.trim().length > 0) {
+    where.status = status.trim() as any;
+  }
+  const jobs = await db.queueJob.findMany({
+    where,
+    orderBy: { createdAt: "desc" },
+    take,
+  });
+  return { jobs };
+});
+
+app.get("/queue/jobs/:id", async (req, reply) => {
+  const id = (req.params as any).id as string;
+  const db = getDb();
+  const job = await db.queueJob.findUnique({ where: { id } });
+  if (!job) return reply.code(404).send({ error: "not_found" });
+  return { job };
+});
+
+app.post("/queue/jobs/:id/cancel", async (req, reply) => {
+  const id = (req.params as any).id as string;
+  const db = getDb();
+  const job = await db.queueJob.findUnique({ where: { id } });
+  if (!job) return reply.code(404).send({ error: "not_found" });
+
+  if (job.status !== "queued" && job.status !== "running") {
+    return reply.code(409).send({ error: "not_cancelable", status: job.status });
+  }
+
+  const updated = await db.queueJob.update({
+    where: { id },
+    data: {
+      status: "canceled",
+      leasedUntil: null,
+      error: "canceled_by_user",
+    },
+  });
+  return { ok: true, job: updated };
+});
+
 app.get("/applications", async (req) => {
   const status = (req.query as any)?.status as string | undefined;
   const db = getDb();

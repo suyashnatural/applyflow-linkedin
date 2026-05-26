@@ -27,6 +27,19 @@ type TriageApplication = {
   };
 };
 
+type NotificationItem = {
+  id: string;
+  createdAt: string;
+  kind: string;
+  title: string;
+  message: string;
+  accountId: string | null;
+  applicationId: string | null;
+  jobPostingId: string | null;
+  metadata: unknown;
+  readAt: string | null;
+};
+
 type AutoApplyStats = {
   accountId: string;
   today: { cycles: number; submitted: number; blocked: number; needsReview: number };
@@ -134,6 +147,21 @@ function getFileHref(path: string): string {
   return path.startsWith("/") ? path : `/${path}`;
 }
 
+function getNotificationTone(kind: string): { color: string; label: string } {
+  switch (kind) {
+    case "linkedin_login_required":
+      return { label: "Login Required", color: "#92400e" };
+    case "linkedin_checkpoint":
+      return { label: "Checkpoint", color: "#991b1b" };
+    case "application_ready_for_review":
+      return { label: "Ready For Review", color: "#175cd3" };
+    case "application_submitted":
+      return { label: "Submitted", color: "#166534" };
+    default:
+      return { label: "Notification", color: "#475467" };
+  }
+}
+
 async function getAccounts(): Promise<LinkedInAccount[]> {
   const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
   const res = await fetch(`${baseUrl}/accounts`, { cache: "no-store", headers: apiAuthHeaders() });
@@ -180,6 +208,20 @@ async function getTriageApplications(): Promise<TriageApplication[]> {
   return json.applications ?? [];
 }
 
+async function getNotifications(accountId: string): Promise<NotificationItem[]> {
+  const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
+  const res = await fetch(
+    `${baseUrl}/notifications?accountId=${encodeURIComponent(accountId)}&limit=20`,
+    {
+      cache: "no-store",
+      headers: apiAuthHeaders(),
+    }
+  );
+  if (!res.ok) throw new Error(`failed to fetch notifications: ${res.status}`);
+  const json = (await res.json()) as { notifications: NotificationItem[] };
+  return json.notifications ?? [];
+}
+
 async function postJson(path: string, body: unknown): Promise<any> {
   const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
   const res = await fetch(`${baseUrl}${path}`, {
@@ -201,6 +243,7 @@ export default async function DashboardPage(props: {
   const stats = await getStats(accountId);
   const schedule = await getSchedule(accountId);
   const triageApplications = await getTriageApplications();
+  const notifications = await getNotifications(accountId);
 
   const defaultMaxAttemptsRaw = process.env.AUTO_APPLY_TOP_N ?? "5";
   const defaultMinScoreRaw = process.env.AUTO_APPLY_MIN_SCORE ?? "70";
@@ -287,6 +330,112 @@ export default async function DashboardPage(props: {
           >
             <button style={{ padding: "8px 12px" }}>Re-auth and resume automation</button>
           </form>
+        </div>
+      </section>
+
+      <section
+        style={{ marginTop: 16, border: "1px solid #e5e5e5", borderRadius: 12, padding: 16 }}
+      >
+        <div style={{ fontWeight: 600 }}>Notifications</div>
+        <div style={{ marginTop: 4, color: "#555", fontSize: 13 }}>
+          Important operator nudges for login, checkpoints, review-ready applications, and submits.
+        </div>
+        <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+          {notifications.map((notification) => {
+            const tone = getNotificationTone(notification.kind);
+            const metadata =
+              notification.metadata && typeof notification.metadata === "object"
+                ? (notification.metadata as Record<string, unknown>)
+                : null;
+            const artifactDir =
+              metadata && typeof metadata.artifactDir === "string" ? metadata.artifactDir : null;
+
+            return (
+              <section
+                key={notification.id}
+                style={{
+                  border: "1px solid #eee",
+                  borderRadius: 12,
+                  padding: 12,
+                  background: notification.readAt ? "#fafafa" : "#fff",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: tone.color }}>
+                      {tone.label}
+                    </div>
+                    <div style={{ fontWeight: 600, marginTop: 2 }}>{notification.title}</div>
+                    <div style={{ fontSize: 13, color: "#555", marginTop: 6 }}>
+                      {notification.message}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#777", marginTop: 6 }}>
+                      {new Date(notification.createdAt).toLocaleString()}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      flexWrap: "wrap",
+                      alignItems: "flex-start",
+                    }}
+                  >
+                    {notification.applicationId ? (
+                      <a
+                        href={`/applications/${notification.applicationId}`}
+                        style={{ color: "#2563eb", textDecoration: "none", fontSize: 13 }}
+                      >
+                        Open →
+                      </a>
+                    ) : null}
+                    {artifactDir ? (
+                      <a
+                        href={getFileHref(artifactDir)}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: "#2563eb", textDecoration: "none", fontSize: 13 }}
+                      >
+                        Artifacts →
+                      </a>
+                    ) : null}
+                    {!notification.readAt ? (
+                      <form
+                        action={async () => {
+                          "use server";
+                          await postJson(`/notifications/${notification.id}/read`, {});
+                        }}
+                      >
+                        <button style={{ padding: "6px 10px" }}>Mark read</button>
+                      </form>
+                    ) : null}
+                    <form
+                      action={async () => {
+                        "use server";
+                        await postJson(`/notifications/${notification.id}/dismiss`, {});
+                      }}
+                    >
+                      <button style={{ padding: "6px 10px" }}>Dismiss</button>
+                    </form>
+                  </div>
+                </div>
+              </section>
+            );
+          })}
+          {notifications.length === 0 ? (
+            <div
+              style={{ padding: 16, border: "1px dashed #ccc", borderRadius: 12, color: "#555" }}
+            >
+              No notifications right now.
+            </div>
+          ) : null}
         </div>
       </section>
 

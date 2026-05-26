@@ -16,6 +16,7 @@ model LinkedInAccount {
   applications  Application[]
   events        Event[]
   autoApplySchedule AutoApplySchedule?
+  notifications Notification[]
 
   @@map("linkedin_accounts")
 }
@@ -43,6 +44,7 @@ model JobPosting {
 
   applications   Application[]
   events         Event[]
+  notifications  Notification[]
 
   @@unique([accountId, linkedInJobId])
   @@index([accountId, discoveredAt])
@@ -65,6 +67,7 @@ model Application {
   steps         ApplicationStep[]
   answers       ApplicationAnswer[]
   events        Event[]
+  notifications Notification[]
 
   @@index([accountId, createdAt])
   @@index([jobPostingId])
@@ -167,6 +170,33 @@ model AutoApplySchedule {
 
   @@index([enabled, nextRunAt])
   @@map("auto_apply_schedules")
+}
+
+model Notification {
+  id            String   @id @default(cuid())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  kind          String
+  title         String
+  message       String
+  metadata      Json?
+
+  accountId     String?
+  account       LinkedInAccount? @relation(fields: [accountId], references: [id])
+
+  applicationId String?
+  application   Application? @relation(fields: [applicationId], references: [id])
+
+  jobPostingId  String?
+  jobPosting    JobPosting? @relation(fields: [jobPostingId], references: [id])
+
+  readAt        DateTime?
+  dismissedAt   DateTime?
+
+  @@index([accountId, createdAt])
+  @@index([accountId, readAt, dismissedAt])
+  @@map("notifications")
 }
 
 enum QueueJobStatus {

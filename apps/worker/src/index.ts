@@ -136,6 +136,32 @@ async function enforceAccountSafetyRails(params: {
   return "ok";
 }
 
+async function createNotification(params: {
+  db: ReturnType<typeof getDb>;
+  kind:
+    | "linkedin_login_required"
+    | "linkedin_checkpoint"
+    | "application_ready_for_review"
+    | "application_submitted";
+  title: string;
+  message: string;
+  accountId?: string;
+  applicationId?: string;
+  jobPostingId?: string;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  const data: Parameters<typeof params.db.notification.create>[0]["data"] = {
+    kind: params.kind,
+    title: params.title,
+    message: params.message,
+    metadata: params.metadata as any,
+  };
+  if (params.accountId) data.accountId = params.accountId;
+  if (params.applicationId) data.applicationId = params.applicationId;
+  if (params.jobPostingId) data.jobPostingId = params.jobPostingId;
+  await params.db.notification.create({ data });
+}
+
 for (;;) {
   const leased = await leaseNextJob({ leaseOwner, leaseMs });
   if (leased.kind === "none") {
@@ -186,6 +212,20 @@ for (;;) {
             payload: { kind: result.kind, url: result.url, source: "bootstrap" },
             accountId,
           },
+        });
+        await createNotification({
+          db,
+          kind: result.kind === "checkpoint" ? "linkedin_checkpoint" : "linkedin_login_required",
+          title:
+            result.kind === "checkpoint"
+              ? "LinkedIn checkpoint detected"
+              : "LinkedIn login required",
+          message:
+            result.kind === "checkpoint"
+              ? "Resolve the LinkedIn checkpoint before automation continues."
+              : "Refresh the LinkedIn session before running more automation.",
+          accountId,
+          metadata: { url: result.url, source: "bootstrap" },
         });
         if (!headful) {
           throw new Error(`session not ready (${result.kind}); rerun with HEADFUL=1 to login`);
@@ -338,6 +378,20 @@ for (;;) {
             payload: { kind: session.kind, url: session.url, source: "auto_apply_cycle" },
             accountId,
           },
+        });
+        await createNotification({
+          db,
+          kind: session.kind === "checkpoint" ? "linkedin_checkpoint" : "linkedin_login_required",
+          title:
+            session.kind === "checkpoint"
+              ? "LinkedIn checkpoint detected"
+              : "LinkedIn login required",
+          message:
+            session.kind === "checkpoint"
+              ? "Auto-apply paused because LinkedIn requested verification."
+              : "Auto-apply could not start because the LinkedIn session needs re-authentication.",
+          accountId,
+          metadata: { url: session.url, source: "auto_apply_cycle" },
         });
         throw new ApplyFlowError({
           code: session.kind === "login_required" ? "blocked_login_required" : "blocked_checkpoint",
@@ -680,6 +734,19 @@ for (;;) {
         },
       });
 
+      if (result.kind === "reached_review") {
+        await createNotification({
+          db,
+          kind: "application_ready_for_review",
+          title: "Application ready for review",
+          message: `${posting.title ?? "Job application"} is ready for answer review before submit.`,
+          accountId,
+          applicationId: application.id,
+          jobPostingId: posting.id,
+          metadata: { artifactDir, jobUrl: posting.url },
+        });
+      }
+
       if (result.kind === "blocked") {
         await db.event.create({
           data: {
@@ -802,6 +869,16 @@ for (;;) {
         await db.application.update({
           where: { id: applicationId },
           data: { status: "submitted" },
+        });
+        await createNotification({
+          db,
+          kind: "application_submitted",
+          title: "Application submitted",
+          message: `${application.jobPosting.title ?? "Job application"} was submitted successfully.`,
+          accountId: application.accountId,
+          applicationId,
+          jobPostingId: application.jobPostingId,
+          metadata: { artifactDir, jobUrl: application.jobPosting.url },
         });
       } else if (result.kind === "needs_review") {
         await db.application.update({

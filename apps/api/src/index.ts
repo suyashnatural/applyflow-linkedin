@@ -53,6 +53,40 @@ app.get("/accounts", async () => {
 });
 
 type SessionHealthStatus = "healthy" | "re_auth_required" | "checkpoint" | "unknown";
+const operatorActor = "local_operator";
+
+async function logOperatorEvent(params: {
+  runId?: string;
+  type:
+    | "OPERATOR_NOTIFICATION_READ"
+    | "OPERATOR_NOTIFICATION_DISMISSED"
+    | "OPERATOR_SESSION_RECOVERY_TRIGGERED"
+    | "OPERATOR_AUTO_APPLY_TRIGGERED"
+    | "OPERATOR_ANSWER_UPSERTED"
+    | "OPERATOR_BULK_APPROVED"
+    | "OPERATOR_APPLICATION_APPROVED"
+    | "OPERATOR_APPLICATION_DENIED";
+  accountId?: string | null;
+  applicationId?: string | null;
+  jobPostingId?: string | null;
+  payload?: Record<string, unknown>;
+}): Promise<void> {
+  const db = getDb();
+  const data: Parameters<typeof db.event.create>[0]["data"] = {
+    runId: params.runId ?? `operator-${Date.now()}`,
+    type: params.type,
+    payload: {
+      actor: operatorActor,
+      ...(params.payload ?? {}),
+    } as any,
+  };
+  if (params.accountId) data.accountId = params.accountId;
+  if (params.applicationId) data.applicationId = params.applicationId;
+  if (params.jobPostingId) data.jobPostingId = params.jobPostingId;
+  await db.event.create({
+    data,
+  });
+}
 
 function getStepReason(step: { detail: unknown }): string | null {
   if (!step.detail || typeof step.detail !== "object") return null;
@@ -148,6 +182,42 @@ app.get("/accounts/:id/session-health", async (req, reply) => {
   return health;
 });
 
+app.get("/audit", async (req) => {
+  const accountId = (req.query as any)?.accountId as string | undefined;
+  const limitRaw = (req.query as any)?.limit as string | number | undefined;
+  const limit =
+    typeof limitRaw === "number"
+      ? Math.floor(limitRaw)
+      : typeof limitRaw === "string"
+        ? Number.parseInt(limitRaw, 10)
+        : 50;
+  const take = Number.isFinite(limit) ? Math.max(1, Math.min(200, limit)) : 50;
+
+  const db = getDb();
+  const events = await db.event.findMany({
+    where: {
+      ...(typeof accountId === "string" && accountId.trim().length > 0
+        ? { accountId: accountId.trim() }
+        : {}),
+      type: {
+        in: [
+          "OPERATOR_NOTIFICATION_READ",
+          "OPERATOR_NOTIFICATION_DISMISSED",
+          "OPERATOR_SESSION_RECOVERY_TRIGGERED",
+          "OPERATOR_AUTO_APPLY_TRIGGERED",
+          "OPERATOR_ANSWER_UPSERTED",
+          "OPERATOR_BULK_APPROVED",
+          "OPERATOR_APPLICATION_APPROVED",
+          "OPERATOR_APPLICATION_DENIED",
+        ],
+      },
+    },
+    orderBy: { time: "desc" },
+    take,
+  });
+  return { events };
+});
+
 app.get("/notifications", async (req) => {
   const accountId = (req.query as any)?.accountId as string | undefined;
   const unreadOnly = (req.query as any)?.unreadOnly === "1";
@@ -197,6 +267,13 @@ app.post("/notifications/:id/read", async (req, reply) => {
     where: { id },
     data: { readAt: existing.readAt ?? new Date() },
   });
+  await logOperatorEvent({
+    type: "OPERATOR_NOTIFICATION_READ",
+    accountId: notification.accountId,
+    applicationId: notification.applicationId,
+    jobPostingId: notification.jobPostingId,
+    payload: { notificationId: notification.id, kind: notification.kind },
+  });
   return { ok: true, notification };
 });
 
@@ -208,6 +285,13 @@ app.post("/notifications/:id/dismiss", async (req, reply) => {
   const notification = await db.notification.update({
     where: { id },
     data: { dismissedAt: new Date(), readAt: existing.readAt ?? new Date() },
+  });
+  await logOperatorEvent({
+    type: "OPERATOR_NOTIFICATION_DISMISSED",
+    accountId: notification.accountId,
+    applicationId: notification.applicationId,
+    jobPostingId: notification.jobPostingId,
+    payload: { notificationId: notification.id, kind: notification.kind },
   });
   return { ok: true, notification };
 });
@@ -403,6 +487,12 @@ app.post("/accounts/:id/recover-session", async (req, reply) => {
       },
     });
   }
+
+  await logOperatorEvent({
+    type: "OPERATOR_SESSION_RECOVERY_TRIGGERED",
+    accountId,
+    payload: { resumedSchedule: Boolean(schedule && !schedule.enabled), jobId },
+  });
 
   return { ok: true, jobId, resumedSchedule: Boolean(schedule && !schedule.enabled) };
 });
@@ -762,6 +852,14 @@ app.post("/applications/:id/answers/bulk-approve", async (req, reply) => {
     orderBy: { questionLabel: "asc" },
   });
 
+  await logOperatorEvent({
+    type: "OPERATOR_BULK_APPROVED",
+    accountId: application.accountId,
+    applicationId,
+    jobPostingId: application.jobPostingId,
+    payload: { approvedCount: candidates.length },
+  });
+
   return { approvedCount: candidates.length, readiness, answers: updatedAnswers };
 });
 
@@ -948,6 +1046,14 @@ app.post("/applications/:id/answers/upsert", async (req, reply) => {
     }
   }
 
+  await logOperatorEvent({
+    type: "OPERATOR_ANSWER_UPSERTED",
+    accountId: application.accountId,
+    applicationId,
+    jobPostingId: application.jobPostingId,
+    payload: { questionId, questionLabel, approved, saveAsTemplate },
+  });
+
   return { answer: row, readiness };
 });
 
@@ -966,6 +1072,13 @@ app.post("/applications/:id/deny", async (req) => {
       state: "denied",
       detail: { reason: reason ?? null },
     },
+  });
+  await logOperatorEvent({
+    type: "OPERATOR_APPLICATION_DENIED",
+    accountId: application.accountId,
+    applicationId: application.id,
+    jobPostingId: application.jobPostingId,
+    payload: { reason: reason ?? null },
   });
   return { application };
 });
@@ -1001,6 +1114,14 @@ app.post("/applications/:id/approve", async (req, reply) => {
     applicationId: application.id,
     jobPostingId: application.jobPostingId,
     payload: { applicationId: application.id },
+  });
+
+  await logOperatorEvent({
+    type: "OPERATOR_APPLICATION_APPROVED",
+    accountId: application.accountId,
+    applicationId: application.id,
+    jobPostingId: application.jobPostingId,
+    payload: { jobId },
   });
 
   return { ok: true, jobId };
@@ -1040,6 +1161,11 @@ app.post("/auto-apply/run", async (req, reply) => {
     priority: 0,
     accountId,
     payload: { accountId, maxAttempts, minScore },
+  });
+  await logOperatorEvent({
+    type: "OPERATOR_AUTO_APPLY_TRIGGERED",
+    accountId,
+    payload: { jobId, maxAttempts: maxAttempts ?? null, minScore: minScore ?? null },
   });
   return { ok: true, jobId };
 });

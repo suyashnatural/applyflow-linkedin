@@ -10,10 +10,19 @@ type AutoApplyCycleEvent = {
 type AutoApplyStats = {
   accountId: string;
   today: { cycles: number; submitted: number; blocked: number; needsReview: number };
+  sessionHealth: SessionHealth;
   recent: {
     cycles: AutoApplyCycleEvent[];
     totals: { discovered: number; synced: number; attemptBudget: number; enqueuedAttempts: number };
   };
+};
+
+type SessionHealth = {
+  accountId: string;
+  status: "healthy" | "re_auth_required" | "checkpoint" | "unknown";
+  canRunAutoApply: boolean;
+  lastOk: { time: string; payload: unknown } | null;
+  lastIssue: { time: string; payload: unknown } | null;
 };
 
 type LinkedInAccount = { id: string; createdAt: string; updatedAt: string };
@@ -50,6 +59,39 @@ function getEventLabel(type: string): string {
         .split("_")
         .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
         .join(" ");
+  }
+}
+
+function getSessionHealthPresentation(status: SessionHealth["status"]): {
+  label: string;
+  color: string;
+  summary: string;
+} {
+  switch (status) {
+    case "healthy":
+      return {
+        label: "Healthy",
+        color: "#166534",
+        summary: "LinkedIn session looks usable for automation.",
+      };
+    case "checkpoint":
+      return {
+        label: "Checkpoint Required",
+        color: "#991b1b",
+        summary: "LinkedIn needs verification before we should run more automation.",
+      };
+    case "re_auth_required":
+      return {
+        label: "Re-auth Required",
+        color: "#92400e",
+        summary: "Session appears stale or logged out. Re-auth before running cycles.",
+      };
+    default:
+      return {
+        label: "Unknown",
+        color: "#374151",
+        summary: "We have not observed enough session signals yet.",
+      };
   }
 }
 
@@ -116,6 +158,7 @@ export default async function DashboardPage(props: {
   const submittedTone = getApplicationOutcomePresentation("submitted");
   const blockedTone = getApplicationOutcomePresentation("blocked_checkpoint");
   const reviewTone = getApplicationOutcomePresentation("needs_answers");
+  const sessionTone = getSessionHealthPresentation(stats.sessionHealth.status);
 
   return (
     <main style={{ padding: 24, maxWidth: 960, margin: "0 auto" }}>
@@ -161,6 +204,44 @@ export default async function DashboardPage(props: {
       <section
         style={{ marginTop: 16, border: "1px solid #e5e5e5", borderRadius: 12, padding: 16 }}
       >
+        <div style={{ fontWeight: 600 }}>Session Health</div>
+        <div style={{ marginTop: 8, fontWeight: 600, color: sessionTone.color }}>
+          {sessionTone.label}
+        </div>
+        <div style={{ marginTop: 4, color: "#555", fontSize: 14 }}>{sessionTone.summary}</div>
+        {stats.sessionHealth.lastOk ? (
+          <div style={{ marginTop: 8, fontSize: 12, color: "#555" }}>
+            last healthy signal: {new Date(stats.sessionHealth.lastOk.time).toLocaleString()}
+          </div>
+        ) : null}
+        {stats.sessionHealth.lastIssue ? (
+          <div style={{ marginTop: 6, fontSize: 12, color: "#92400e" }}>
+            last issue: {new Date(stats.sessionHealth.lastIssue.time).toLocaleString()}
+          </div>
+        ) : null}
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
+          <form
+            action={async () => {
+              "use server";
+              await postJson(`/accounts/${encodeURIComponent(accountId)}/bootstrap-session`, {});
+            }}
+          >
+            <button style={{ padding: "8px 12px" }}>Bootstrap session</button>
+          </form>
+          <form
+            action={async () => {
+              "use server";
+              await postJson(`/accounts/${encodeURIComponent(accountId)}/recover-session`, {});
+            }}
+          >
+            <button style={{ padding: "8px 12px" }}>Re-auth and resume automation</button>
+          </form>
+        </div>
+      </section>
+
+      <section
+        style={{ marginTop: 16, border: "1px solid #e5e5e5", borderRadius: 12, padding: 16 }}
+      >
         <div style={{ fontWeight: 600 }}>Controls</div>
         <div
           style={{
@@ -171,15 +252,6 @@ export default async function DashboardPage(props: {
             marginTop: 10,
           }}
         >
-          <form
-            action={async () => {
-              "use server";
-              await postJson(`/accounts/${encodeURIComponent(accountId)}/bootstrap-session`, {});
-            }}
-          >
-            <button style={{ padding: "8px 12px" }}>Bootstrap session</button>
-          </form>
-
           <form
             action={async (formData) => {
               "use server";
@@ -221,12 +293,25 @@ export default async function DashboardPage(props: {
                 }}
               />
             </label>
-            <button style={{ padding: "8px 12px" }}>Run auto-apply cycle now</button>
+            <button
+              disabled={!stats.sessionHealth.canRunAutoApply}
+              style={{
+                padding: "8px 12px",
+                opacity: stats.sessionHealth.canRunAutoApply ? 1 : 0.6,
+              }}
+            >
+              Run auto-apply cycle now
+            </button>
           </form>
         </div>
         <div style={{ marginTop: 8, fontSize: 12, color: "#777" }}>
           Tip: refresh the page after triggering a job to see new events and counts.
         </div>
+        {!stats.sessionHealth.canRunAutoApply ? (
+          <div style={{ marginTop: 8, fontSize: 12, color: "#92400e" }}>
+            Manual cycle runs are disabled until the LinkedIn session is healthy again.
+          </div>
+        ) : null}
         <div style={{ marginTop: 10, fontSize: 12, color: "#777" }}>
           Scheduler process: run `npm run dev:scheduler` to turn saved schedules into cycle jobs.
         </div>

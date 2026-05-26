@@ -179,6 +179,14 @@ for (;;) {
       logger.info({ jobId, accountId, result }, "linkedin session check");
 
       if (result.kind !== "ok") {
+        await db.event.create({
+          data: {
+            runId: job.runId,
+            type: "LINKEDIN_SESSION_REQUIRED",
+            payload: { kind: result.kind, url: result.url, source: "bootstrap" },
+            accountId,
+          },
+        });
         if (!headful) {
           throw new Error(`session not ready (${result.kind}); rerun with HEADFUL=1 to login`);
         }
@@ -187,6 +195,15 @@ for (;;) {
         }
         throw new Error("linkedin login not completed");
       }
+
+      await db.event.create({
+        data: {
+          runId: job.runId,
+          type: "LINKEDIN_SESSION_OK",
+          payload: { url: result.url, source: "bootstrap" },
+          accountId,
+        },
+      });
     } else if (job.type === "DISCOVER_LINKEDIN_JOBS") {
       const accountId = job.accountId ?? (job.payload as any)?.accountId;
       if (!accountId || typeof accountId !== "string") {
@@ -314,12 +331,29 @@ for (;;) {
       const headful = process.env.HEADFUL ? process.env.HEADFUL === "1" : true;
       const session = await ensureLinkedInSession({ accountId, headful });
       if (session.kind !== "ok") {
+        await db.event.create({
+          data: {
+            runId: job.runId,
+            type: "LINKEDIN_SESSION_REQUIRED",
+            payload: { kind: session.kind, url: session.url, source: "auto_apply_cycle" },
+            accountId,
+          },
+        });
         throw new ApplyFlowError({
           code: session.kind === "login_required" ? "blocked_login_required" : "blocked_checkpoint",
           message: `session not ready (${session.kind})`,
           retryable: false,
         });
       }
+
+      await db.event.create({
+        data: {
+          runId: job.runId,
+          type: "LINKEDIN_SESSION_OK",
+          payload: { url: session.url, source: "auto_apply_cycle" },
+          accountId,
+        },
+      });
 
       const maxAttemptsRaw = (job.payload as any)?.maxAttempts;
       const maxAttempts =

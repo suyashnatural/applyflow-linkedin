@@ -52,6 +52,58 @@ app.get("/accounts", async () => {
   return { accounts };
 });
 
+type SessionHealthStatus = "healthy" | "re_auth_required" | "checkpoint" | "unknown";
+
+async function getSessionHealthSnapshot(accountId: string): Promise<{
+  accountId: string;
+  status: SessionHealthStatus;
+  canRunAutoApply: boolean;
+  lastOk: { time: Date; payload: unknown } | null;
+  lastIssue: { time: Date; payload: unknown } | null;
+}> {
+  const db = getDb();
+  const [lastOk, lastIssue] = await Promise.all([
+    db.event.findFirst({
+      where: { accountId, type: "LINKEDIN_SESSION_OK" },
+      orderBy: { time: "desc" },
+    }),
+    db.event.findFirst({
+      where: {
+        accountId,
+        OR: [{ type: "LINKEDIN_SESSION_REQUIRED" }, { type: "LINKEDIN_BLOCKED" }],
+      },
+      orderBy: { time: "desc" },
+    }),
+  ]);
+
+  let status: SessionHealthStatus = "unknown";
+  if (lastIssue && (!lastOk || lastIssue.time >= lastOk.time)) {
+    const payload = (lastIssue.payload as any) ?? {};
+    const kind = payload.kind ?? payload.blockedReason;
+    status = kind === "checkpoint" ? "checkpoint" : "re_auth_required";
+  } else if (lastOk) {
+    status = "healthy";
+  }
+
+  return {
+    accountId,
+    status,
+    canRunAutoApply: status === "healthy" || status === "unknown",
+    lastOk: lastOk ? { time: lastOk.time, payload: lastOk.payload } : null,
+    lastIssue: lastIssue ? { time: lastIssue.time, payload: lastIssue.payload } : null,
+  };
+}
+
+app.get("/accounts/:id/session-health", async (req, reply) => {
+  const accountId = (req.params as any).id as string;
+  if (!accountId || accountId.trim().length === 0) {
+    return reply.code(400).send({ error: "missing_account_id" });
+  }
+
+  const health = await getSessionHealthSnapshot(accountId.trim());
+  return health;
+});
+
 app.get("/auto-apply/schedules", async (req) => {
   const accountId = (req.query as any)?.accountId as string | undefined;
   const db = getDb();
@@ -160,6 +212,41 @@ app.post("/accounts/:id/bootstrap-session", async (req, reply) => {
   return { ok: true, jobId };
 });
 
+app.post("/accounts/:id/recover-session", async (req, reply) => {
+  const accountId = (req.params as any).id as string;
+  if (!accountId || accountId.trim().length === 0) {
+    return reply.code(400).send({ error: "missing_account_id" });
+  }
+
+  const db = getDb();
+  await db.linkedInAccount.upsert({
+    where: { id: accountId },
+    update: {},
+    create: { id: accountId },
+  });
+
+  const jobId = await enqueueJob({
+    type: "LINKEDIN_SESSION_BOOTSTRAP",
+    runId: `run-${Date.now()}`,
+    priority: 0,
+    accountId,
+    payload: { accountId },
+  });
+
+  const schedule = await db.autoApplySchedule.findUnique({ where: { accountId } });
+  if (schedule && !schedule.enabled) {
+    await db.autoApplySchedule.update({
+      where: { accountId },
+      data: {
+        enabled: true,
+        nextRunAt: computeNextRunAt({ cron: schedule.cron, timezone: schedule.timezone }),
+      },
+    });
+  }
+
+  return { ok: true, jobId, resumedSchedule: Boolean(schedule && !schedule.enabled) };
+});
+
 app.get("/healthz/db", async (_req, reply) => {
   const db = getDb();
   try {
@@ -247,9 +334,12 @@ app.get("/stats/auto-apply", async (req) => {
   });
   const needsReview = await db.application.count({ where: { accountId, status: "needs_review" } });
 
+  const sessionHealth = await getSessionHealthSnapshot(accountId);
+
   return {
     accountId,
     today: { cycles: cyclesToday, submitted: submittedToday, blocked: blockedToday, needsReview },
+    sessionHealth,
     recent: {
       cycles: recentCycles,
       totals: {
@@ -698,11 +788,20 @@ app.post("/applications/:id/approve", async (req, reply) => {
   return { ok: true, jobId };
 });
 
-app.post("/auto-apply/run", async (req) => {
+app.post("/auto-apply/run", async (req, reply) => {
   const body = (req.body as any) ?? {};
   const accountId = body.accountId as string | undefined;
   if (!accountId || typeof accountId !== "string") {
     throw new Error("auto-apply requires accountId");
+  }
+
+  const health = await getSessionHealthSnapshot(accountId);
+  if (!health.canRunAutoApply) {
+    return reply.code(409).send({
+      ok: false,
+      error: "session_unhealthy",
+      sessionHealth: health,
+    });
   }
 
   const maxAttemptsRaw = body.maxAttempts as number | undefined;

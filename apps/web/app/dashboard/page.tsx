@@ -40,6 +40,20 @@ type NotificationItem = {
   readAt: string | null;
 };
 
+type NotificationsResponse = {
+  notifications: NotificationItem[];
+  unreadCount: number;
+};
+
+type NotificationPreference = {
+  accountId: string;
+  notifyLoginRequired: boolean;
+  notifyCheckpoint: boolean;
+  notifyReadyForReview: boolean;
+  notifySubmitted: boolean;
+  duplicateCooldownMinutes: number;
+};
+
 type AutoApplyStats = {
   accountId: string;
   today: { cycles: number; submitted: number; blocked: number; needsReview: number };
@@ -208,7 +222,7 @@ async function getTriageApplications(): Promise<TriageApplication[]> {
   return json.applications ?? [];
 }
 
-async function getNotifications(accountId: string): Promise<NotificationItem[]> {
+async function getNotifications(accountId: string): Promise<NotificationsResponse> {
   const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
   const res = await fetch(
     `${baseUrl}/notifications?accountId=${encodeURIComponent(accountId)}&limit=20`,
@@ -218,8 +232,19 @@ async function getNotifications(accountId: string): Promise<NotificationItem[]> 
     }
   );
   if (!res.ok) throw new Error(`failed to fetch notifications: ${res.status}`);
-  const json = (await res.json()) as { notifications: NotificationItem[] };
-  return json.notifications ?? [];
+  const json = (await res.json()) as NotificationsResponse;
+  return { notifications: json.notifications ?? [], unreadCount: json.unreadCount ?? 0 };
+}
+
+async function getNotificationPreference(accountId: string): Promise<NotificationPreference> {
+  const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
+  const res = await fetch(`${baseUrl}/notification-preferences/${encodeURIComponent(accountId)}`, {
+    cache: "no-store",
+    headers: apiAuthHeaders(),
+  });
+  if (!res.ok) throw new Error(`failed to fetch notification preferences: ${res.status}`);
+  const json = (await res.json()) as { preference: NotificationPreference };
+  return json.preference;
 }
 
 async function postJson(path: string, body: unknown): Promise<any> {
@@ -243,7 +268,10 @@ export default async function DashboardPage(props: {
   const stats = await getStats(accountId);
   const schedule = await getSchedule(accountId);
   const triageApplications = await getTriageApplications();
-  const notifications = await getNotifications(accountId);
+  const notificationsResponse = await getNotifications(accountId);
+  const notifications = notificationsResponse.notifications;
+  const unreadCount = notificationsResponse.unreadCount;
+  const notificationPreference = await getNotificationPreference(accountId);
 
   const defaultMaxAttemptsRaw = process.env.AUTO_APPLY_TOP_N ?? "5";
   const defaultMinScoreRaw = process.env.AUTO_APPLY_MIN_SCORE ?? "70";
@@ -336,10 +364,86 @@ export default async function DashboardPage(props: {
       <section
         style={{ marginTop: 16, border: "1px solid #e5e5e5", borderRadius: 12, padding: 16 }}
       >
-        <div style={{ fontWeight: 600 }}>Notifications</div>
+        <div
+          style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}
+        >
+          <div style={{ fontWeight: 600 }}>Notifications</div>
+          <div style={{ fontSize: 12, color: unreadCount > 0 ? "#b42318" : "#667085" }}>
+            unread: {unreadCount}
+          </div>
+        </div>
         <div style={{ marginTop: 4, color: "#555", fontSize: 13 }}>
           Important operator nudges for login, checkpoints, review-ready applications, and submits.
         </div>
+        <form
+          action={async (formData) => {
+            "use server";
+            await postJson(`/notification-preferences/${encodeURIComponent(accountId)}/upsert`, {
+              notifyLoginRequired: formData.get("notifyLoginRequired") === "on",
+              notifyCheckpoint: formData.get("notifyCheckpoint") === "on",
+              notifyReadyForReview: formData.get("notifyReadyForReview") === "on",
+              notifySubmitted: formData.get("notifySubmitted") === "on",
+              duplicateCooldownMinutes: String(formData.get("duplicateCooldownMinutes") ?? "120"),
+            });
+          }}
+          style={{ display: "grid", gap: 8, marginTop: 12 }}
+        >
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <label style={{ fontSize: 12, color: "#555" }}>
+              <input
+                type="checkbox"
+                name="notifyLoginRequired"
+                defaultChecked={notificationPreference.notifyLoginRequired}
+                style={{ marginRight: 6 }}
+              />
+              login required
+            </label>
+            <label style={{ fontSize: 12, color: "#555" }}>
+              <input
+                type="checkbox"
+                name="notifyCheckpoint"
+                defaultChecked={notificationPreference.notifyCheckpoint}
+                style={{ marginRight: 6 }}
+              />
+              checkpoint
+            </label>
+            <label style={{ fontSize: 12, color: "#555" }}>
+              <input
+                type="checkbox"
+                name="notifyReadyForReview"
+                defaultChecked={notificationPreference.notifyReadyForReview}
+                style={{ marginRight: 6 }}
+              />
+              ready for review
+            </label>
+            <label style={{ fontSize: 12, color: "#555" }}>
+              <input
+                type="checkbox"
+                name="notifySubmitted"
+                defaultChecked={notificationPreference.notifySubmitted}
+                style={{ marginRight: 6 }}
+              />
+              submitted
+            </label>
+          </div>
+          <label style={{ fontSize: 12, color: "#555" }}>
+            duplicate cooldown minutes:
+            <input
+              name="duplicateCooldownMinutes"
+              defaultValue={notificationPreference.duplicateCooldownMinutes}
+              style={{
+                marginLeft: 8,
+                padding: "6px 8px",
+                borderRadius: 10,
+                border: "1px solid #ddd",
+                width: 100,
+              }}
+            />
+          </label>
+          <button style={{ width: "fit-content", padding: "8px 12px" }}>
+            Save notification preferences
+          </button>
+        </form>
         <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
           {notifications.map((notification) => {
             const tone = getNotificationTone(notification.kind);

@@ -148,6 +148,61 @@ app.get("/accounts/:id/session-health", async (req, reply) => {
   return health;
 });
 
+app.get("/notifications", async (req) => {
+  const accountId = (req.query as any)?.accountId as string | undefined;
+  const unreadOnly = (req.query as any)?.unreadOnly === "1";
+  const limitRaw = (req.query as any)?.limit as string | number | undefined;
+  const limit =
+    typeof limitRaw === "number"
+      ? Math.floor(limitRaw)
+      : typeof limitRaw === "string"
+        ? Number.parseInt(limitRaw, 10)
+        : 25;
+  const take = Number.isFinite(limit) ? Math.max(1, Math.min(100, limit)) : 25;
+
+  const db = getDb();
+  const where: Prisma.NotificationWhereInput = {
+    dismissedAt: null,
+  };
+  if (typeof accountId === "string" && accountId.trim().length > 0) {
+    where.accountId = accountId.trim();
+  }
+  if (unreadOnly) {
+    where.readAt = null;
+  }
+
+  const notifications = await db.notification.findMany({
+    where,
+    orderBy: { createdAt: "desc" },
+    take,
+  });
+  return { notifications };
+});
+
+app.post("/notifications/:id/read", async (req, reply) => {
+  const id = (req.params as any).id as string;
+  const db = getDb();
+  const existing = await db.notification.findUnique({ where: { id } });
+  if (!existing) return reply.code(404).send({ error: "not_found" });
+  const notification = await db.notification.update({
+    where: { id },
+    data: { readAt: existing.readAt ?? new Date() },
+  });
+  return { ok: true, notification };
+});
+
+app.post("/notifications/:id/dismiss", async (req, reply) => {
+  const id = (req.params as any).id as string;
+  const db = getDb();
+  const existing = await db.notification.findUnique({ where: { id } });
+  if (!existing) return reply.code(404).send({ error: "not_found" });
+  const notification = await db.notification.update({
+    where: { id },
+    data: { dismissedAt: new Date(), readAt: existing.readAt ?? new Date() },
+  });
+  return { ok: true, notification };
+});
+
 app.get("/auto-apply/schedules", async (req) => {
   const accountId = (req.query as any)?.accountId as string | undefined;
   const db = getDb();

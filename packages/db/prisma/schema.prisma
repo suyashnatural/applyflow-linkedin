@@ -17,6 +17,7 @@ model LinkedInAccount {
   events        Event[]
   autoApplySchedule AutoApplySchedule?
   notifications Notification[]
+  notificationPreference NotificationPreference?
 
   @@map("linkedin_accounts")
 }
@@ -197,6 +198,23 @@ model Notification {
   @@index([accountId, createdAt])
   @@index([accountId, readAt, dismissedAt])
   @@map("notifications")
+}
+
+model NotificationPreference {
+  id                      String   @id @default(cuid())
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  accountId               String   @unique
+  account                 LinkedInAccount @relation(fields: [accountId], references: [id])
+
+  notifyLoginRequired     Boolean  @default(true)
+  notifyCheckpoint        Boolean  @default(true)
+  notifyReadyForReview    Boolean  @default(true)
+  notifySubmitted         Boolean  @default(true)
+  duplicateCooldownMinutes Int     @default(120)
+
+  @@map("notification_preferences")
 }
 
 enum QueueJobStatus {

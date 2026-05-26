@@ -150,6 +150,49 @@ async function createNotification(params: {
   jobPostingId?: string;
   metadata?: Record<string, unknown>;
 }): Promise<void> {
+  if (!params.accountId) return;
+
+  const preference = await params.db.notificationPreference.upsert({
+    where: { accountId: params.accountId },
+    update: {},
+    create: { accountId: params.accountId },
+  });
+
+  const allowed =
+    (params.kind === "linkedin_login_required" && preference.notifyLoginRequired) ||
+    (params.kind === "linkedin_checkpoint" && preference.notifyCheckpoint) ||
+    (params.kind === "application_ready_for_review" && preference.notifyReadyForReview) ||
+    (params.kind === "application_submitted" && preference.notifySubmitted);
+  if (!allowed) return;
+
+  const cooldownMinutes = Math.max(0, preference.duplicateCooldownMinutes);
+  if (cooldownMinutes > 0) {
+    const since = new Date(Date.now() - cooldownMinutes * 60_000);
+    const recent = await params.db.notification.findFirst({
+      where: {
+        accountId: params.accountId,
+        kind: params.kind,
+        applicationId: params.applicationId ?? null,
+        jobPostingId: params.jobPostingId ?? null,
+        dismissedAt: null,
+        createdAt: { gte: since },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    if (recent) return;
+  }
+
+  if (params.kind === "linkedin_login_required" || params.kind === "linkedin_checkpoint") {
+    await params.db.notification.updateMany({
+      where: {
+        accountId: params.accountId,
+        kind: params.kind,
+        dismissedAt: null,
+      },
+      data: { dismissedAt: new Date() },
+    });
+  }
+
   const data: Parameters<typeof params.db.notification.create>[0]["data"] = {
     kind: params.kind,
     title: params.title,

@@ -176,7 +176,16 @@ app.get("/notifications", async (req) => {
     orderBy: { createdAt: "desc" },
     take,
   });
-  return { notifications };
+  const unreadCount = await db.notification.count({
+    where: {
+      ...(typeof accountId === "string" && accountId.trim().length > 0
+        ? { accountId: accountId.trim() }
+        : {}),
+      dismissedAt: null,
+      readAt: null,
+    },
+  });
+  return { notifications, unreadCount };
 });
 
 app.post("/notifications/:id/read", async (req, reply) => {
@@ -201,6 +210,58 @@ app.post("/notifications/:id/dismiss", async (req, reply) => {
     data: { dismissedAt: new Date(), readAt: existing.readAt ?? new Date() },
   });
   return { ok: true, notification };
+});
+
+app.get("/notification-preferences/:accountId", async (req, reply) => {
+  const accountId = (req.params as any).accountId as string;
+  if (!accountId || accountId.trim().length === 0) {
+    return reply.code(400).send({ error: "missing_account_id" });
+  }
+
+  const db = getDb();
+  const preference = await db.notificationPreference.upsert({
+    where: { accountId: accountId.trim() },
+    update: {},
+    create: { accountId: accountId.trim() },
+  });
+  return { preference };
+});
+
+app.post("/notification-preferences/:accountId/upsert", async (req, reply) => {
+  const accountId = (req.params as any).accountId as string;
+  if (!accountId || accountId.trim().length === 0) {
+    return reply.code(400).send({ error: "missing_account_id" });
+  }
+
+  const body = (req.body as any) ?? {};
+  const duplicateCooldownRaw =
+    typeof body.duplicateCooldownMinutes === "number"
+      ? body.duplicateCooldownMinutes
+      : Number(body.duplicateCooldownMinutes);
+  const duplicateCooldownMinutes = Number.isFinite(duplicateCooldownRaw)
+    ? Math.max(0, Math.floor(duplicateCooldownRaw))
+    : 120;
+
+  const db = getDb();
+  const preference = await db.notificationPreference.upsert({
+    where: { accountId: accountId.trim() },
+    update: {
+      notifyLoginRequired: body.notifyLoginRequired !== false,
+      notifyCheckpoint: body.notifyCheckpoint !== false,
+      notifyReadyForReview: body.notifyReadyForReview !== false,
+      notifySubmitted: body.notifySubmitted !== false,
+      duplicateCooldownMinutes,
+    },
+    create: {
+      accountId: accountId.trim(),
+      notifyLoginRequired: body.notifyLoginRequired !== false,
+      notifyCheckpoint: body.notifyCheckpoint !== false,
+      notifyReadyForReview: body.notifyReadyForReview !== false,
+      notifySubmitted: body.notifySubmitted !== false,
+      duplicateCooldownMinutes,
+    },
+  });
+  return { ok: true, preference };
 });
 
 app.get("/auto-apply/schedules", async (req) => {

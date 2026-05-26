@@ -7,6 +7,26 @@ type AutoApplyCycleEvent = {
   payload: unknown;
 };
 
+type TriageApplication = {
+  id: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  accountId: string;
+  jobPostingId: string;
+  kind: "blocked_login" | "checkpoint" | "submit_failed" | "dry_run_failed" | "other";
+  latestStepName: string | null;
+  latestReason: string | null;
+  latestArtifactDir: string | null;
+  jobPosting: {
+    id: string;
+    title: string | null;
+    companyName: string | null;
+    score: number | null;
+    url: string;
+  };
+};
+
 type AutoApplyStats = {
   accountId: string;
   today: { cycles: number; submitted: number; blocked: number; needsReview: number };
@@ -95,6 +115,25 @@ function getSessionHealthPresentation(status: SessionHealth["status"]): {
   }
 }
 
+function getTriageTone(kind: TriageApplication["kind"]): { label: string; color: string } {
+  switch (kind) {
+    case "blocked_login":
+      return { label: "Blocked Login", color: "#92400e" };
+    case "checkpoint":
+      return { label: "Checkpoint", color: "#991b1b" };
+    case "submit_failed":
+      return { label: "Submit Failed", color: "#b42318" };
+    case "dry_run_failed":
+      return { label: "Dry-Run Failed", color: "#344054" };
+    default:
+      return { label: "Needs Triage", color: "#475467" };
+  }
+}
+
+function getFileHref(path: string): string {
+  return path.startsWith("/") ? path : `/${path}`;
+}
+
 async function getAccounts(): Promise<LinkedInAccount[]> {
   const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
   const res = await fetch(`${baseUrl}/accounts`, { cache: "no-store", headers: apiAuthHeaders() });
@@ -130,6 +169,17 @@ async function getSchedule(accountId: string): Promise<AutoApplySchedule | null>
   return json.schedules?.[0] ?? null;
 }
 
+async function getTriageApplications(): Promise<TriageApplication[]> {
+  const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
+  const res = await fetch(`${baseUrl}/applications/triage?limit=12`, {
+    cache: "no-store",
+    headers: apiAuthHeaders(),
+  });
+  if (!res.ok) throw new Error(`failed to fetch triage applications: ${res.status}`);
+  const json = (await res.json()) as { applications: TriageApplication[] };
+  return json.applications ?? [];
+}
+
 async function postJson(path: string, body: unknown): Promise<any> {
   const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
   const res = await fetch(`${baseUrl}${path}`, {
@@ -150,6 +200,7 @@ export default async function DashboardPage(props: {
     sp.accountId ?? accounts.at(0)?.id ?? process.env.LINKEDIN_ACCOUNT_ID ?? "default";
   const stats = await getStats(accountId);
   const schedule = await getSchedule(accountId);
+  const triageApplications = await getTriageApplications();
 
   const defaultMaxAttemptsRaw = process.env.AUTO_APPLY_TOP_N ?? "5";
   const defaultMinScoreRaw = process.env.AUTO_APPLY_MIN_SCORE ?? "70";
@@ -319,6 +370,97 @@ export default async function DashboardPage(props: {
           <a href="/queue" style={{ color: "#2563eb", textDecoration: "none", fontSize: 14 }}>
             View queue →
           </a>
+        </div>
+      </section>
+
+      <section
+        style={{ marginTop: 16, border: "1px solid #e5e5e5", borderRadius: 12, padding: 16 }}
+      >
+        <div style={{ fontWeight: 600 }}>Failure Triage</div>
+        <div style={{ marginTop: 4, color: "#555", fontSize: 13 }}>
+          Recent blocked and failed applications, ordered by the most actionable issues first.
+        </div>
+        <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+          {triageApplications.map((application) => {
+            const tone = getTriageTone(application.kind);
+            return (
+              <section
+                key={application.id}
+                style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 600 }}>
+                      {application.jobPosting.title ?? "Untitled"} @{" "}
+                      {application.jobPosting.companyName ?? "Unknown"}
+                    </div>
+                    <div style={{ fontSize: 12, color: tone.color, marginTop: 4 }}>
+                      {tone.label}
+                      {application.latestStepName ? ` · ${application.latestStepName}` : ""}
+                    </div>
+                    {application.latestReason ? (
+                      <div style={{ fontSize: 12, color: "#555", marginTop: 6 }}>
+                        {application.latestReason}
+                      </div>
+                    ) : null}
+                    <div style={{ fontSize: 12, color: "#777", marginTop: 6 }}>
+                      updated: {new Date(application.updatedAt).toLocaleString()}
+                      {typeof application.jobPosting.score === "number"
+                        ? ` · score: ${application.jobPosting.score}`
+                        : ""}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 10,
+                      alignItems: "flex-start",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <a
+                      href={`/applications/${application.id}`}
+                      style={{ color: "#2563eb", textDecoration: "none", fontSize: 13 }}
+                    >
+                      Open review →
+                    </a>
+                    <a
+                      href={application.jobPosting.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ color: "#2563eb", textDecoration: "none", fontSize: 13 }}
+                    >
+                      LinkedIn job →
+                    </a>
+                    {application.latestArtifactDir ? (
+                      <a
+                        href={getFileHref(application.latestArtifactDir)}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: "#2563eb", textDecoration: "none", fontSize: 13 }}
+                      >
+                        Artifacts →
+                      </a>
+                    ) : null}
+                  </div>
+                </div>
+              </section>
+            );
+          })}
+          {triageApplications.length === 0 ? (
+            <div
+              style={{ padding: 16, border: "1px dashed #ccc", borderRadius: 12, color: "#555" }}
+            >
+              No recent failed or blocked applications.
+            </div>
+          ) : null}
         </div>
       </section>
 

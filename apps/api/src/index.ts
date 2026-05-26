@@ -54,6 +54,50 @@ app.get("/accounts", async () => {
 
 type SessionHealthStatus = "healthy" | "re_auth_required" | "checkpoint" | "unknown";
 
+function getStepReason(step: { detail: unknown }): string | null {
+  if (!step.detail || typeof step.detail !== "object") return null;
+  return (
+    ((step.detail as any).reason as string | undefined) ??
+    ((step.detail as any).error as string | undefined) ??
+    null
+  );
+}
+
+function getStepArtifactDir(step: { detail: unknown }): string | null {
+  if (!step.detail || typeof step.detail !== "object") return null;
+  const artifactDir = (step.detail as any).artifactDir;
+  return typeof artifactDir === "string" ? artifactDir : null;
+}
+
+function classifyTriageKind(params: {
+  applicationStatus: string;
+  latestStepName: string | null;
+  latestReason: string | null;
+}): "blocked_login" | "checkpoint" | "submit_failed" | "dry_run_failed" | "other" {
+  if (params.applicationStatus === "blocked") {
+    if (params.latestReason?.includes("login")) return "blocked_login";
+    return "checkpoint";
+  }
+  if (params.latestStepName?.includes("SUBMIT")) return "submit_failed";
+  if (params.latestStepName?.includes("DRY_RUN")) return "dry_run_failed";
+  return "other";
+}
+
+function triagePriority(kind: string): number {
+  switch (kind) {
+    case "blocked_login":
+      return 0;
+    case "checkpoint":
+      return 1;
+    case "submit_failed":
+      return 2;
+    case "dry_run_failed":
+      return 3;
+    default:
+      return 4;
+  }
+}
+
 async function getSessionHealthSnapshot(accountId: string): Promise<{
   accountId: string;
   status: SessionHealthStatus;
@@ -403,6 +447,64 @@ app.post("/queue/jobs/:id/cancel", async (req, reply) => {
     },
   });
   return { ok: true, job: updated };
+});
+
+app.get("/applications/triage", async (req) => {
+  const limitRaw = (req.query as any)?.limit as string | number | undefined;
+  const limit =
+    typeof limitRaw === "number"
+      ? Math.floor(limitRaw)
+      : typeof limitRaw === "string"
+        ? Number.parseInt(limitRaw, 10)
+        : 20;
+  const take = Number.isFinite(limit) ? Math.max(1, Math.min(100, limit)) : 20;
+
+  const db = getDb();
+  const applications = await db.application.findMany({
+    where: { status: { in: ["failed", "blocked"] } },
+    orderBy: { updatedAt: "desc" },
+    take: Math.max(take * 3, 20),
+    include: {
+      jobPosting: {
+        select: { id: true, title: true, companyName: true, score: true, url: true },
+      },
+      steps: { orderBy: { createdAt: "desc" }, take: 6 },
+    },
+  });
+
+  const triageItems = applications
+    .map((application) => {
+      const latestStep = application.steps[0] ?? null;
+      const latestReason = latestStep ? getStepReason(latestStep) : null;
+      const latestArtifactDir = latestStep ? getStepArtifactDir(latestStep) : null;
+      const kind = classifyTriageKind({
+        applicationStatus: application.status,
+        latestStepName: latestStep?.name ?? null,
+        latestReason,
+      });
+
+      return {
+        id: application.id,
+        status: application.status,
+        updatedAt: application.updatedAt,
+        createdAt: application.createdAt,
+        accountId: application.accountId,
+        jobPostingId: application.jobPostingId,
+        kind,
+        latestStepName: latestStep?.name ?? null,
+        latestReason,
+        latestArtifactDir,
+        jobPosting: application.jobPosting,
+      };
+    })
+    .sort(
+      (a, b) =>
+        triagePriority(a.kind) - triagePriority(b.kind) ||
+        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    )
+    .slice(0, take);
+
+  return { applications: triageItems };
 });
 
 app.get("/applications", async (req) => {

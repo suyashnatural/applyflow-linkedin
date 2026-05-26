@@ -150,7 +150,11 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
   }
 
   const groupedSteps = [...stepGroups.entries()];
-  const artifactSteps = application.steps.filter((step) => Boolean(getArtifactDir(step)));
+  const artifactSteps = application.steps
+    .filter((step) => Boolean(getArtifactDir(step)))
+    .slice()
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const latestArtifactDir = artifactSteps[0] ? getArtifactDir(artifactSteps[0]) : null;
 
   return (
     <main style={{ padding: 24, maxWidth: 1040, margin: "0 auto" }}>
@@ -233,6 +237,25 @@ export default async function ApplicationPage(props: { params: Promise<{ id: str
         </div>
 
         <div style={{ display: "flex", gap: 12, marginTop: 16, flexWrap: "wrap" }}>
+          {latestArtifactDir ? (
+            <a
+              href={getFileHref(latestArtifactDir)}
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                padding: "8px 12px",
+                border: "1px solid #d0d5dd",
+                borderRadius: 8,
+                textDecoration: "none",
+                color: "#344054",
+                background: "#fff",
+                fontSize: 14,
+              }}
+            >
+              Open latest artifacts
+            </a>
+          ) : null}
+
           <form
             action={async () => {
               "use server";

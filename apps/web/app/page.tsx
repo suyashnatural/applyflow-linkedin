@@ -46,6 +46,12 @@ export default async function Home() {
           >
             Dashboard →
           </a>
+          <a
+            href={`/audit?accountId=${encodeURIComponent(accountId)}`}
+            style={{ color: "#2563eb", textDecoration: "none", fontSize: 14 }}
+          >
+            Audit trail →
+          </a>
           <a href="/templates" style={{ color: "#2563eb", textDecoration: "none", fontSize: 14 }}>
             Manage answer templates →
           </a>

@@ -54,6 +54,16 @@ type NotificationPreference = {
   duplicateCooldownMinutes: number;
 };
 
+type AuditEvent = {
+  id: string;
+  time: string;
+  type: string;
+  accountId: string | null;
+  applicationId: string | null;
+  jobPostingId: string | null;
+  payload: unknown;
+};
+
 type AutoApplyStats = {
   accountId: string;
   today: { cycles: number; submitted: number; blocked: number; needsReview: number };
@@ -176,6 +186,29 @@ function getNotificationTone(kind: string): { color: string; label: string } {
   }
 }
 
+function getAuditLabel(type: string): string {
+  switch (type) {
+    case "OPERATOR_NOTIFICATION_READ":
+      return "Notification read";
+    case "OPERATOR_NOTIFICATION_DISMISSED":
+      return "Notification dismissed";
+    case "OPERATOR_SESSION_RECOVERY_TRIGGERED":
+      return "Session recovery triggered";
+    case "OPERATOR_AUTO_APPLY_TRIGGERED":
+      return "Auto-apply triggered";
+    case "OPERATOR_ANSWER_UPSERTED":
+      return "Answer updated";
+    case "OPERATOR_BULK_APPROVED":
+      return "Bulk approve";
+    case "OPERATOR_APPLICATION_APPROVED":
+      return "Application approved";
+    case "OPERATOR_APPLICATION_DENIED":
+      return "Application denied";
+    default:
+      return type;
+  }
+}
+
 async function getAccounts(): Promise<LinkedInAccount[]> {
   const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
   const res = await fetch(`${baseUrl}/accounts`, { cache: "no-store", headers: apiAuthHeaders() });
@@ -247,6 +280,17 @@ async function getNotificationPreference(accountId: string): Promise<Notificatio
   return json.preference;
 }
 
+async function getAuditEvents(accountId: string): Promise<AuditEvent[]> {
+  const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
+  const res = await fetch(`${baseUrl}/audit?accountId=${encodeURIComponent(accountId)}&limit=5`, {
+    cache: "no-store",
+    headers: apiAuthHeaders(),
+  });
+  if (!res.ok) throw new Error(`failed to fetch audit events: ${res.status}`);
+  const json = (await res.json()) as { events: AuditEvent[] };
+  return json.events ?? [];
+}
+
 async function postJson(path: string, body: unknown): Promise<any> {
   const baseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
   const res = await fetch(`${baseUrl}${path}`, {
@@ -272,6 +316,7 @@ export default async function DashboardPage(props: {
   const notifications = notificationsResponse.notifications;
   const unreadCount = notificationsResponse.unreadCount;
   const notificationPreference = await getNotificationPreference(accountId);
+  const auditEvents = await getAuditEvents(accountId);
 
   const defaultMaxAttemptsRaw = process.env.AUTO_APPLY_TOP_N ?? "5";
   const defaultMinScoreRaw = process.env.AUTO_APPLY_MIN_SCORE ?? "70";
@@ -623,6 +668,13 @@ export default async function DashboardPage(props: {
           <a href="/queue" style={{ color: "#2563eb", textDecoration: "none", fontSize: 14 }}>
             View queue →
           </a>
+          <span style={{ margin: "0 8px", color: "#d0d5dd" }}>·</span>
+          <a
+            href={`/audit?accountId=${encodeURIComponent(accountId)}`}
+            style={{ color: "#2563eb", textDecoration: "none", fontSize: 14 }}
+          >
+            View audit trail →
+          </a>
         </div>
       </section>
 
@@ -712,6 +764,51 @@ export default async function DashboardPage(props: {
               style={{ padding: 16, border: "1px dashed #ccc", borderRadius: 12, color: "#555" }}
             >
               No recent failed or blocked applications.
+            </div>
+          ) : null}
+        </div>
+      </section>
+
+      <section
+        style={{ marginTop: 16, border: "1px solid #e5e5e5", borderRadius: 12, padding: 16 }}
+      >
+        <div style={{ fontWeight: 600 }}>Recent Operator Actions</div>
+        <div style={{ marginTop: 4, color: "#555", fontSize: 13 }}>
+          Recent human-in-the-loop actions across notifications, approvals, and manual triggers.
+        </div>
+        <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+          {auditEvents.map((event) => (
+            <section
+              key={event.id}
+              style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                <div>
+                  <div style={{ fontWeight: 600 }}>{getAuditLabel(event.type)}</div>
+                  <div style={{ marginTop: 4, fontSize: 12, color: "#777" }}>
+                    {event.applicationId ? (
+                      <a
+                        href={`/applications/${event.applicationId}`}
+                        style={{ color: "#2563eb", textDecoration: "none" }}
+                      >
+                        application {event.applicationId}
+                      </a>
+                    ) : (
+                      <>account {event.accountId ?? "unknown"}</>
+                    )}
+                  </div>
+                </div>
+                <div style={{ fontSize: 12, color: "#777" }}>
+                  {new Date(event.time).toLocaleString()}
+                </div>
+              </div>
+            </section>
+          ))}
+          {auditEvents.length === 0 ? (
+            <div
+              style={{ padding: 16, border: "1px dashed #ccc", borderRadius: 12, color: "#555" }}
+            >
+              No operator actions recorded yet.
             </div>
           ) : null}
         </div>
